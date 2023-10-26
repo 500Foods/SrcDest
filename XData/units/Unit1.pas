@@ -41,11 +41,11 @@ procedure TServerContainer.DataModuleCreate(Sender: TObject);
 begin
   // Setup Swagger Header
   TXDataModelBuilder.LoadXMLDoc(XDataServer.Model);
-  XDataServer.Model.Title := 'Blaugment REST API';
+  XDataServer.Model.Title := 'SrcDest REST API';
   XDataServer.Model.Version := '1.0';
   XDataServer.Model.Description :=
     '### Overview'#13#10 +
-    'This is the REST API for interacting with Blaugment.';
+    'This is the REST API for interacting with SrcDest.';
 end;
 
 end.
