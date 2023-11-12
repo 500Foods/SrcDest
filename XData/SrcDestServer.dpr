@@ -1,4 +1,4 @@
-program SrcDest;
+program SrcDestServer;
 
 uses
   Vcl.Forms,
