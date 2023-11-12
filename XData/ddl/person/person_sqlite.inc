@@ -22,11 +22,11 @@ begin
     SQL.Add('select count(*) records from '+TableName+';');
     try
       Open;
-      mmInfo.Lines.Add('...'+TableName+' ('+IntToStr(FieldByName('records').AsInteger)+' records)');
+      LogEvent('...'+TableName+' ('+IntToStr(FieldByName('records').AsInteger)+' records)');
 
     except on E:Exception do
       begin
-        mmInfo.Lines.Add('...'+TableName+' (CREATE)');
+        LogEvent('...'+TableName+' (CREATE)');
         SQL.Clear;
         SQL.Add('create table if not exists '+TableName+' ( '+
                 '  person_id                  integer     NOT NULL, '+
@@ -56,7 +56,7 @@ begin
     // Populate empty table with sample data
     if (FieldByName('records').AsInteger = 0) then
     begin
-      mmInfo.Lines.Add('...'+TableName+' (POPULATE)');
+      LogEvent('...'+TableName+' (POPULATE)');
       SQL.Clear;
 
       // Default password for SYSINSTALLER is "TMSWEBCore" - Passwords are SHA256 Hashes with a prefix of XData-Password:
