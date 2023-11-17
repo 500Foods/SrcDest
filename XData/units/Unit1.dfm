@@ -8,7 +8,7 @@ object ServerContainer: TServerContainer
     Top = 16
   end
   object XDataServer: TXDataServer
-    BaseUrl = 'http://+:12345/tms/xdata'
+    BaseUrl = 'http://+:65456/srcdest'
     Dispatcher = SparkleHttpSysDispatcher
     Pool = XDataConnectionPool
     EntitySetPermissions = <>
