@@ -1,0 +1,7 @@
+{
+  "Agent Database": "agentc.sqlite",
+  "Agent Websocket": 23432,
+  "Client History": [
+    "{\"type\":\"status\"}"
+  ]
+}
