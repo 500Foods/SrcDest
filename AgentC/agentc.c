@@ -1,10 +1,9 @@
 // agentc.c
-//
-// 2024-Mar-18
 
 #define AGENT_VERSION    "1.0.0"
 #define AGENT_DB_VERSION "1.0.0"
 #define XXH_STATIC_SEED  1234567
+#define MAX_MESSAGE_SIZE 65536
 
 // Standard C libraries
 #include <stdio.h>
@@ -19,22 +18,55 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <arpa/inet.h>
 
 // Non-standard C libraries
 #include <libwebsockets.h>
-//#include <libwebsockets/lws-logs.h>
-#include <cJSON.h>
+#include <jansson.h>
 #include <sqlite3.h>
 #include <xxhash.h>
 #include <libfswatch/c/libfswatch.h>
 #include <libfswatch/c/cevent.h>
 
+
+
 // Global vars 
+
 volatile sig_atomic_t running = 1;
 sqlite3 *db;
 char launch_timestamp[20];
 char *db_path;
 int ws_port;
+int ws_connections;
+int ws_connections_total;
+int ws_requests;
+static char message_buffer[MAX_MESSAGE_SIZE];
+static size_t message_length = 0;
+
+
+
+// Function prototypes
+
+int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
+void handle_status_request(struct lws *wsi, const char *db_path);
+int initialize_websocket_server(struct lws_context **context, int port);
+void cleanup_websocket_server(struct lws_context *context);
+void custom_log_callback(int level, const char *line); 
+void *monitor_thread(void *arg);
+void signal_handler(int signum);
+void refresh_fileset(int fileset_id, const char *filesetroot);
+void fswatch_callback(fsw_cevent const *const events, const unsigned int event_num, void *data);
+int create_database();
+int check_database_version(const char *expected_version);
+int insert_default_fileset(const char *cwd, time_t now);
+int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port);
+void update_file_state(int fileset_id, const char *filename, const char *state);
+void insert_file_record(int fileset_id, const char *filename, const char *state);
+const char *get_file_state(int fileset_id, const char *filename, sqlite3_int64 *mtime);
+XXH64_hash_t calculate_file_hash(const char *path);
+void format_hash_string(XXH64_hash_t hash, char *hash_str);
+void print_summary(int fileset_id, int fileCount, int matchedCount, int addedCount, int updatedCount, int missingCount);
+
 
 // Global types
 
@@ -47,28 +79,6 @@ typedef struct {
     char *db_path;
 } MonitorSession;
 
-// Function prototypes
-int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
-void handle_status_request(struct lws *wsi, const char *db_path);
-int initialize_websocket_server(struct lws_context **context, int port);
-void cleanup_websocket_server(struct lws_context *context);
-void custom_log_callback(int level, const char *line); 
-
-void *monitor_thread(void *arg);
-void signal_handler(int signum);
-void refresh_fileset(int fileset_id, const char *filesetroot);
-void fswatch_callback(fsw_cevent const *const events, const unsigned int event_num, void *data);
-int create_database();
-int check_database_version(const char *expected_version);
-int insert_default_fileset(const char *cwd, time_t now);
-int load_configuration(const char *config_file, char **json_str, cJSON **root, char **db_path, int *ws_port);
-void update_file_state(int fileset_id, const char *filename, const char *state);
-void insert_file_record(int fileset_id, const char *filename, const char *state);
-const char *get_file_state(int fileset_id, const char *filename, sqlite3_int64 *mtime);
-XXH64_hash_t calculate_file_hash(const char *path);
-void format_hash_string(XXH64_hash_t hash, char *hash_str);
-void print_summary(int fileset_id, int fileCount, int matchedCount, int addedCount, int updatedCount, int missingCount);
-
 // WebSocket protocol structure
 struct lws_protocols protocols[] = {
     {
@@ -80,103 +90,285 @@ struct lws_protocols protocols[] = {
     { NULL, NULL, 0, 0 } // Terminator
 };
 
+
+
 // WebSocket callback function
 int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
-    printf("wscll: Websocket callback initiated\n");
+
     switch (reason) {
-        case LWS_CALLBACK_PROTOCOL_INIT:
-            return 0;
-            break;
-        case LWS_CALLBACK_ESTABLISHED:
-            printf("wsest: Connection established\n");
-            // New WebSocket connection established
-            // Handle HTTP request, including WebSocket handshake
-            //if (lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI) == 1 &&
-                //strcmp(lws_hdr_simple_ptr(wsi, WSI_TOKEN_GET_URI), "/") == 0) {
-                // Upgrade to WebSocket connection
-                //lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_HOST);
-                //return lws_http_to_websocket(wsi, buf, protocols);
+
+        case LWS_CALLBACK_RECEIVE: // 6
+
+            ws_requests++;
+    
+            // Get the remaining packet payload
+            //size_t remaining = lws_remaining_packet_payload(wsi);
+            //bool is_final = lws_is_final_fragment(wsi);
+
+            // Allocate memory to store the complete message
+            //void *complete_message = malloc(len + remaining);
+            //memcpy(complete_message, in, len);
+
+            // Read the remaining packet payload
+            //size_t total_len = len;
+            //while (remaining > 0) {
+                //int bytes_read = lws_get_peer_write_allowance(wsi);
+                //if (bytes_read <= 0) {
+                    //printf("Error getting peer write allowance\n");
+                    //free(complete_message);
+                    //return -1;
+                //}
+//
+                //size_t copy_len = (bytes_read < remaining) ? bytes_read : remaining;
+                //memcpy((char *)complete_message + total_len, (char *)in + total_len, copy_len);
+                //total_len += copy_len;
+                //remaining -= copy_len;
             //}
-            return 0;
-            break;
-        case LWS_CALLBACK_RECEIVE:
-            // Received a message from the client
-            // Parse the JSON message and handle the request
-            cJSON *request = cJSON_Parse(in);
+//
+            if (message_length + len > MAX_MESSAGE_SIZE) {
+                // Handle error: message too large
+                printf("Error: Message too large\n");
+                message_length = 0; // Reset buffer
+                return -1;
+            }
+            memcpy(message_buffer + message_length, in, len);
+            message_length += len;
+
+            if (!lws_is_final_fragment(wsi)) {
+                // Wait for more fragments
+                return 0;
+            }
+
+            // Process the complete message here
+            json_t *request = json_loadb(message_buffer, message_length, 0, NULL);
+            message_length = 0; // Reset buffer for the next message
+
+
+            // Parse the complete message as JSON
+//            json_t *request = json_loadb(complete_message, total_len, 0, NULL);
+//            free(complete_message);
+        
+            // Get connection info 
+            socklen_t len;
+            struct sockaddr_storage addr;
+            char ipstr[INET6_ADDRSTRLEN];
+            int fd, port;
+            len = sizeof(addr);
+            fd = lws_get_socket_fd(wsi);
+            getpeername(fd, (struct sockaddr*)&addr, &len);
+
+            // deal with both IPv4 and IPv6:
+            if (addr.ss_family == AF_INET) {
+                struct sockaddr_in *s = (struct sockaddr_in*)&addr;
+                port = ntohs(s->sin_port);
+                inet_ntop(AF_INET, &s->sin_addr, ipstr, INET6_ADDRSTRLEN);
+            } else { // AF_INET6
+                struct sockaddr_in6 *s = (struct sockaddr_in6*)&addr;
+                port = ntohs(s->sin6_port);
+                inet_ntop(AF_INET6, &s->sin6_addr, ipstr, INET6_ADDRSTRLEN);
+            }
+
+             // printf("Peer IP address: %s\n", ipstr);
+             // printf("Peer port      : %d\n", port);
+
+            printf("libws: Websocket callback (%d-Receive) from %s\n", reason, ipstr);
+
             if (request == NULL) {
                 // Invalid JSON request
-                cJSON *error_response = cJSON_CreateObject();
-                cJSON_AddStringToObject(error_response, "status", "error");
-                cJSON_AddStringToObject(error_response, "message", "Invalid JSON request");
-                char *error_response_str = cJSON_PrintUnformatted(error_response);
-                lws_write(wsi, error_response_str, strlen(error_response_str), LWS_WRITE_TEXT);
-                cJSON_Delete(error_response);
-                //NO! cJSON_free(error_response_str);
+                printf("Agent: Invalid JSON request: %.*s\n", (int)len, (char *)in);
+                json_t *response = json_object();
+                json_object_set_new(response, "status", json_string("error"));
+                json_object_set_new(response, "message", json_string("Invalid JSON request"));
+    
+                // Send the JSON response
+                char *response_str = json_dumps(response, JSON_COMPACT);
+                size_t len = strlen(response_str);
+                unsigned char *buf = malloc(LWS_PRE + len);
+                memcpy(buf + LWS_PRE, response_str, len);
+                lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
+
+                // Cleanup the JSON response
+                free(buf);
+                free(response_str);
+                json_decref(response);
+
+            } else if (!json_is_object(request)) {
+                // Invalid JSON request (not an object)
+                printf("Agent: Invalid JSON request (not an object)\n");
+                json_t *response = json_object();
+                json_object_set_new(response, "status", json_string("error"));
+                json_object_set_new(response, "message", json_string("Invalid JSON request (not an object)"));
+    
+                // Send the JSON response
+                char *response_str = json_dumps(response, JSON_COMPACT);
+                size_t len = strlen(response_str);
+                unsigned char *buf = malloc(LWS_PRE + len);
+                memcpy(buf + LWS_PRE, response_str, len);
+                lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
+
+                // Cleanup the JSON response
+                free(buf);
+                free(response_str);
+                json_decref(response);
+
             } else {
-                char *type = cJSON_GetObjectItemCaseSensitive(request, "type")->valuestring;
-                if (strcmp(type, "status") == 0) {
+                // Valid JSON - let's check the type of request
+                const char *type = json_string_value(json_object_get(request, "type"));
+    
+                if (type && strcmp(type, "status") == 0) {
+                    // Status - return basic system information mostly for testing
+                    printf("Agent: Status request\n");
                     handle_status_request(wsi, db_path);
+
                 } else {
+                    printf("Agent: Unknown request\n");
                     // Unknown request type
-                    cJSON *error_response = cJSON_CreateObject();
-                    cJSON_AddStringToObject(error_response, "status", "error");
-                    cJSON_AddStringToObject(error_response, "message", "Unknown request type");
-                    char *error_response_str = cJSON_PrintUnformatted(error_response);
-                    lws_write(wsi, error_response_str, strlen(error_response_str), LWS_WRITE_TEXT);
-                    cJSON_Delete(error_response);
-                    //NO! cJSON_free(error_response_str);
+                    json_t *response = json_object();
+                    json_object_set_new(response, "status", json_string("error"));
+                    json_object_set_new(response, "message", json_string("Unknown request type"));
+    
+                    // Send the JSON response
+                    char *response_str = json_dumps(response, JSON_COMPACT);
+                    size_t len = strlen(response_str);
+                    unsigned char *buf = malloc(LWS_PRE + len);
+                    memcpy(buf + LWS_PRE, response_str, len);
+                    lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
+
+                    // Cleanup the JSON response
+                    free(buf);
+                    free(response_str);
+                    json_decref(response);
                 }
-                cJSON_Delete(request);
             }
+
+            // Cleanup
+            json_decref(request);
+            return 0;
+
+        case LWS_CALLBACK_ESTABLISHED: // 0
+            printf("libws: Websocket callback (%d-Connection)\n", reason);
             return 0;
             break;
-        // Add more cases for other callback reasons as needed
+
+        case LWS_CALLBACK_CLOSED: // 4
+            printf("libws: Websocket callback (%d-Closed)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_RECEIVE_PONG: // 7
+            printf("libws: Websocket callback (%d-ReceivePong)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_SERVER_WRITEABLE: // 11
+            printf("libws: Websocket callback (%d-ServerWriteable)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_FILTER_NETWORK_CONNECTION: // 17
+            printf("libws: Websocket callback (%d-FilterNetworkConnection)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: // 19
+            printf("libws: Websocket callback (%d-ServerNewClientInstantiated)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: // 20 
+            printf("libws: Websocket callback (%d-FilterProtocolConnection)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_PROTOCOL_INIT: // 27
+            printf("libws: Websocket callback (%d-ProtocolInit)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_PROTOCOL_DESTROY: // 28
+            printf("libws: Websocket callback (%d-ProtocolDestroy)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_WSI_CREATE: // 29
+            ws_connections++;
+            ws_connections_total++;
+            printf("libws: Websocket callback (%d-WSICreate)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_WSI_DESTROY: // 30
+            ws_connections--;
+            printf("libws: Websocket callback (%d-WSIDestroy)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_GET_THREAD_ID: // 31
+            printf("libws: Websocket callback (%d-GetThreadID)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_WS_PEER_INITIATED_CLOSE: // 38
+            printf("libws: Websocket callback (%d-WSPeerInitiatedClose)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_HTTP_BIND_PROTOCOL: // 49
+            printf("libws: Websocket callback (%d-HTTPBindProtocol)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_ADD_HEADERS: // 53
+            printf("libws: Websocket callback (%d-AddHeaders)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_EVENT_WAIT_CANCELLED: // 71
+            printf("libws: Websocket callback (%d-EventWaitCancelled)\n", reason);
+            return 0;
+            break;
+
+        case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: // 
+            printf("libws: Websocket callback (%d-HTTPConfirmUpgrade)\n", reason);
+            return 0;
+            break;
+
+        default:
+            printf("libws: Websocket callback (%d-Other)\n", reason);
     }
-    return 0;
 }
+
 
 
 // Function to handle status request
 void handle_status_request(struct lws *wsi, const char *db_path) {
-    // Retrieve the necessary information
-    printf("Serve: Status request\n");
-
+    
     // Construct the JSON response
-    cJSON *response = cJSON_CreateObject();
-    if (response == NULL) {
-        printf("Error: Failed to create JSON response object\n");
-        return;
-    }
+    json_t *response = json_object();
+    json_object_set_new(response, "status", json_string("success"));
+    json_object_set_new(response, "launchTime", json_string(launch_timestamp));
+    json_object_set_new(response, "agentVersion", json_string(AGENT_VERSION));
+    json_object_set_new(response, "databaseVersion", json_string(AGENT_DB_VERSION));
+    json_object_set_new(response, "databaseFilename", json_string(db_path));
+    json_object_set_new(response, "activeCconnections", json_integer(ws_connections));
+    json_object_set_new(response, "totalCconnections", json_integer(ws_connections_total));
+    json_object_set_new(response, "requests", json_integer(ws_requests));
 
-    cJSON_AddStringToObject(response, "status", "success");
-    cJSON_AddStringToObject(response, "launchTime", launch_timestamp);
-    cJSON_AddStringToObject(response, "agentVersion", AGENT_VERSION);
-    cJSON_AddStringToObject(response, "databaseVersion", AGENT_DB_VERSION);
+    // Send the JSON response
+    char *response_str = json_dumps(response, JSON_COMPACT);
+    size_t len = strlen(response_str);
+    unsigned char *buf = malloc(LWS_PRE + len);
+    memcpy(buf + LWS_PRE, response_str, len);
+    lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
 
-    if (db_path != NULL) {
-        cJSON_AddStringToObject(response, "databaseFilename", db_path);
-    }
-
-    // Convert JSON to string
-    char *response_str = NULL;
-    response_str = cJSON_PrintUnformatted(response);
-    if (response_str == NULL) {
-        printf("Error: Failed to convert JSON response to string\n");
-        cJSON_Delete(response);
-        return;
-    }
-
-    // Send the response back to the client
-    lws_write(wsi, response_str, strlen(response_str), LWS_WRITE_TEXT);
-
-    // Cleanup
-    cJSON_Delete(response);
-    // This is apparently handled by cJSON internally?
-    // cJSON_free(response_str);
+    // Cleanup the JSON response
+    free(buf);
+    free(response_str);
+    json_decref(response);
 }
 
 
-// Function to initialize WebSocket server
+
 int initialize_websocket_server(struct lws_context **context, int port) {
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
@@ -249,6 +441,7 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
     int matchedCount = 0;
     int addedCount = 0;
     int updatedCount = 0;
+    char* hash_str = (char*)malloc(17); 
 
     // Recursive function to process files and directories
     void process_entry(const char *path) {
@@ -266,7 +459,6 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
                 sqlite3_bind_int64(insert_stmt, 4, st.st_size);
 
                 XXH64_hash_t hash = calculate_file_hash(path);
-                char hash_str[17];
                 format_hash_string(hash, hash_str);
                 sqlite3_bind_text(insert_stmt, 5, hash_str, -1, SQLITE_STATIC);
             }
@@ -323,6 +515,7 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
     sqlite3_finalize(insert_stmt);
     sqlite3_finalize(select_stmt);
 
+    free(hash_str);
     // Check for missing files in the database
     int missingCount = 0;
     rc = sqlite3_prepare_v2(db, "SELECT FILENAME FROM FILEDATA WHERE FILESET = ? AND FILESTATE != 'deleted'", -1, &select_stmt, NULL);
@@ -536,7 +729,7 @@ int insert_default_fileset(const char *cwd, time_t now) {
 }
 
 // Run at startup
-int load_configuration(const char *config_file, char **json_str, cJSON **root, char **db_path, int *ws_port) {
+int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port) {
     FILE *fp = fopen(config_file, "r");
 
     // If configuration not found, create one out of thin air, load that, and then continue
@@ -573,40 +766,44 @@ int load_configuration(const char *config_file, char **json_str, cJSON **root, c
 
     printf("Agent: Parsing configuration\n");
 
-    *root = cJSON_Parse(*json_str);
+    json_error_t error;
+    *root = json_loads(*json_str, 0, &error);
     if (!*root) {
-        printf("Error parsing JSON configuration file\n");
+        printf("Error parsing JSON configuration file: %s\n", error.text);
         free(*json_str);
         return 1;
     }
 
     printf("Agent: Identifying database\n");
 
-    if (!cJSON_GetObjectItem(*root, "Agent Database")) {
+    json_t *db_path_json = json_object_get(*root, "Agent Database");
+    if (!db_path_json || !json_is_string(db_path_json)) {
         printf("Error reading 'Agent Database' from configuration\n");
-        cJSON_Delete(*root);
+        json_decref(*root);
         free(*json_str);
         return 1;
     }
 
-    *db_path = cJSON_GetObjectItemCaseSensitive(*root, "Agent Database")->valuestring;
+    *db_path = strdup(json_string_value(db_path_json));
     printf("Agent: Database identified as '%s'\n", *db_path);
 
     printf("Agent: Identifying WebSocket port\n");
 
-    cJSON *ws_port_json = cJSON_GetObjectItem(*root, "Agent Websocket");
-    if (!ws_port_json || !cJSON_IsNumber(ws_port_json)) {
+    json_t *ws_port_json = json_object_get(*root, "Agent Websocket");
+    if (!ws_port_json || !json_is_integer(ws_port_json)) {
         printf("Error reading 'Agent Websocket' from configuration\n");
-        cJSON_Delete(*root);
+        json_decref(*root);
         free(*json_str);
         return 1;
     }
 
-    *ws_port = ws_port_json->valueint;
+    *ws_port = json_integer_value(ws_port_json);
     printf("Agent: WebSocket port identified as %d\n", *ws_port);
 
     return 0;
 }
+
+
 
 void update_file_state(int fileset_id, const char *filename, const char *state) {
     sqlite3_stmt *stmt;
@@ -692,7 +889,7 @@ int main(int argc, char *argv[]) {
 
     // Load configuration
     char *json_str;
-    cJSON *root;
+    json_t *root;
     char *db_path;
     if (load_configuration(argv[1], &json_str, &root, &db_path, &ws_port) != 0) {
         return 1;
@@ -702,7 +899,6 @@ int main(int argc, char *argv[]) {
     int rc = sqlite3_open(db_path, &db);
     if (rc != SQLITE_OK) {
         printf("Error opening SQLite database: %s\n", sqlite3_errmsg(db));
-        cJSON_Delete(root);
         free(json_str);
         return 1;
     }
@@ -710,7 +906,6 @@ int main(int argc, char *argv[]) {
     // Create the database and tables
     if (create_database() != 0) {
         printf("Error creating SQLite database\n");
-        cJSON_Delete(root);
         free(json_str);
         sqlite3_close(db);
         return 1;
@@ -719,7 +914,6 @@ int main(int argc, char *argv[]) {
     // Check the database version
     if (check_database_version(AGENT_DB_VERSION) != 0) {
         printf("Error checking database version\n");
-        cJSON_Delete(root);
         free(json_str);
         sqlite3_close(db);
         return 1;
@@ -729,7 +923,6 @@ int main(int argc, char *argv[]) {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         printf("Error getting current working directory\n");
-        cJSON_Delete(root);
         free(json_str);
         sqlite3_close(db);
         return 1;
@@ -738,7 +931,6 @@ int main(int argc, char *argv[]) {
     // Insert the default file set only if the FILESETS table is empty
     if (insert_default_fileset(cwd, now) != 0) {
         sqlite3_close(db);
-        cJSON_Delete(root);
         free(json_str);
         return 1;
     }
@@ -753,7 +945,6 @@ int main(int argc, char *argv[]) {
     rc = sqlite3_prepare_v2(db, "SELECT FILESET, FILESETNAME, FILESETROOT FROM FILESETS", -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         printf("Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
-        cJSON_Delete(root);
         free(json_str);
         sqlite3_close(db);
         return 1;
@@ -817,7 +1008,6 @@ int main(int argc, char *argv[]) {
     struct lws_context *ws_context = NULL;
     if (initialize_websocket_server(&ws_context, ws_port) != 0) {
         // Cleanup and exit
-        cJSON_Delete(root);
         free(json_str);
         sqlite3_close(db);
         return 1;
@@ -838,9 +1028,8 @@ int main(int argc, char *argv[]) {
         free(sessions[i].db_path);
     }
     free(sessions);
-
-    cJSON_Delete(root);
     free(json_str);
+    json_decref(root);
     sqlite3_close(db);
     cleanup_websocket_server(ws_context);
 
