@@ -33,4 +33,3 @@ In particular, playing nice with command-line history was a bit of work. With a 
 - Prompt Tookit - Made the seemingly impossible work pretty great
 - AsyncIO - Wouldn't be here without it
 
-- 
