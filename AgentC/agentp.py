@@ -143,7 +143,7 @@ async def main():
                     json_data = json.loads(user_input)
                     if user_input not in history_data:
                         history_data.append(user_input)
-                        config['Client History'] = history_data
+                        config['Agent History'] = history_data
                         with open(config_file, 'w') as file:
                             json.dump(config, file, indent=2)
 
