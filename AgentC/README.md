@@ -18,7 +18,7 @@ Having a shiny new C-based WebSocket server is great and all, but not of much us
 To help with that, a Python script called AgentP has been provided. It can be pointed at the same JSON configuration file, and then 
 selecting a system to connect to will give you the ability to send and receive messages (JSON). 
 
-## Dependencies
+## Dependencies - C
 While we're not doing anything particularly interesting here, we do need a few extra bits.
 - libwebsockets - The websockets interface, naturally
 - jansson - A C library for handling JSON
@@ -26,3 +26,11 @@ While we're not doing anything particularly interesting here, we do need a few e
 - xxhash - To generate file hashes, very quickly, so we can tell what has changed
 - sqlite3 - For local storage of file data
 
+## Dependencies - Python
+A great deal of effort was spent trying to make a nice Python program. If there is such a thing.
+In particular, playing nice with command-line history was a bit of work. With a bit of help.
+- websockets - No surprise there
+- Prompt Tookit - Made the seemingly impossible work pretty great
+- AsyncIO - Wouldn't be here without it
+
+- 
