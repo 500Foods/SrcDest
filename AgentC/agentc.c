@@ -1,9 +1,18 @@
 // agentc.c
 
-#define AGENT_VERSION    "1.0.0"
-#define AGENT_DB_VERSION "1.0.0"
-#define XXH_STATIC_SEED  1234567
-#define MAX_MESSAGE_SIZE 65536
+#define AGENT_VERSION       "AgentC v1.0.0"
+#define AGENT_DB_VERSION    "AgentC DB v1.0.0"
+#define AGENT_IP            "127.0.0.1"
+#define AGENT_PORT          23432
+#define AGENT_PROTOCOL      "agentc-protocol"
+#define AGENT_APP           "AgentC"
+#define AGENT_CLIENT        "CLI"
+#define XXH_STATIC_SEED     1234567
+#define MAX_MESSAGE_SIZE    65536
+#define MAX_LOG_EVENT_SIZE  30
+#define MAX_LOG_DETAIL_SIZE 100
+#define SEPARATOR           "-------------------------\n"
+#define DEBUG_WS            0  
 
 // Standard C libraries
 #include <stdio.h>
@@ -35,8 +44,9 @@
 volatile sig_atomic_t running = 1;
 sqlite3 *db;
 char launch_timestamp[20];
-char *db_path;
-int ws_port;
+char *agent_name;
+char *database_name;
+int ws_port = AGENT_PORT;
 int ws_connections;
 int ws_connections_total;
 int ws_requests;
@@ -46,9 +56,10 @@ static size_t message_length = 0;
 
 
 // Function prototypes
-
+void handle_events_request(struct lws *wsi, const char *app, const char *client, const char *event, const char *fileset, int age, const char *request_ip, const char *request_app, const char *request_client) ; 
+void LogEvent(const char *ipaddress, const char *app, const char *client, const char *event, const char *details, long duration, int fileset); 
 int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
-void handle_status_request(struct lws *wsi, const char *db_path);
+void handle_status_request(struct lws *wsi, const char *request_ip, const char *request_app, const char *request_client);
 int initialize_websocket_server(struct lws_context **context, int port);
 void cleanup_websocket_server(struct lws_context *context);
 void custom_log_callback(int level, const char *line); 
@@ -59,7 +70,7 @@ void fswatch_callback(fsw_cevent const *const events, const unsigned int event_n
 int create_database();
 int check_database_version(const char *expected_version);
 int insert_default_fileset(const char *cwd, time_t now);
-int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port);
+int load_configuration(const char *config_file, char **json_str, json_t **root);
 void update_file_state(int fileset_id, const char *filename, const char *state);
 void insert_file_record(int fileset_id, const char *filename, const char *state);
 const char *get_file_state(int fileset_id, const char *filename, sqlite3_int64 *mtime);
@@ -76,19 +87,141 @@ typedef struct {
     int fileset_id;
     char *filesetname;
     char *filesetroot;
-    char *db_path;
 } MonitorSession;
 
 // WebSocket protocol structure
-struct lws_protocols protocols[] = {
+// WebSocket connection state to track
+typedef struct _ws_session_data {
+    char x_forwarded_for[256]; 
+} ws_session_data;
+
+static struct lws_protocols protocols[] =
+{
     {
-        "agent-protocol",
-        ws_callback,
-        0,
-        0,
+        .name                  = AGENT_PROTOCOL,           // Protocol name
+        .callback              = ws_callback,              // Protocol callback 
+        .per_session_data_size = sizeof(ws_session_data),  // Protocol callback 'userdata' size 
+        .rx_buffer_size        = 0,                        // Receve buffer size (0 = no restriction) 
+        .id                    = 0,                        // Protocol Id (version) (optional) 
+        .user                  = NULL,                     // 'User data' ptr, to access in 'protocol callback 
+        .tx_packet_size        = 0                         // Transmission buffer size restriction (0 = no restriction) 
     },
-    { NULL, NULL, 0, 0 } // Terminator
+    { NULL, NULL, 0, 0, 0, NULL, 0 }                       // Terminator
 };
+
+
+
+// Function to handle events request
+void handle_events_request(struct lws *wsi, const char *app, const char *client, const char *event, const char *fileset, int age, const char *request_ip, const char *request_app, const char *request_client) {
+
+    // Logging setup
+    char eventtype[MAX_LOG_EVENT_SIZE] = "Events";
+    char details[MAX_LOG_DETAIL_SIZE] = "";
+    struct timeval start, stop;
+    int msecs = 0;
+    gettimeofday(&start, NULL);
+    strcat(details, AGENT_VERSION);
+    strcat(details, " / ");
+    strcat(details, AGENT_DB_VERSION);
+
+    sqlite3_stmt *stmt;
+
+    // Setup query with optional values
+    char sql[256] = "SELECT * FROM EVENTS WHERE 1=1";
+    if (app)     { strcat(sql, " AND APP = ?"     ); }
+    if (client)  { strcat(sql, " AND CLIENT = ?"  ); }
+    if (event)   { strcat(sql, " AND EVENT = ?"   ); }
+    if (fileset) { strcat(sql, " AND FILESET = ?" ); }
+    strcat(sql, " AND LOGSTAMP > datetime('now', -?||' seconds') ORDER BY LOGSTAMP DESC");
+
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        printf("Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+
+    // Populate with what we know
+    int param_index = 1;
+    if (app)     { sqlite3_bind_text(stmt, param_index++, app, -1, SQLITE_STATIC); }
+    if (client)  { sqlite3_bind_text(stmt, param_index++, client, -1, SQLITE_STATIC); }
+    if (event)   { sqlite3_bind_text(stmt, param_index++, event, -1, SQLITE_STATIC); }
+    if (fileset) { sqlite3_bind_text(stmt, param_index++, fileset, -1, SQLITE_STATIC); }
+    sqlite3_bind_int(stmt, param_index, age);
+
+    json_t *events = json_array();
+    int count = 0;
+
+    // Output what we've found
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        json_t *event = json_object();
+        json_object_set_new(event, "logstamp",  json_string((const char *)sqlite3_column_text(stmt, 0)));
+        json_object_set_new(event, "ipaddress", json_string((const char *)sqlite3_column_text(stmt, 1)));
+        json_object_set_new(event, "app",       json_string((const char *)sqlite3_column_text(stmt, 2)));
+        json_object_set_new(event, "client",    json_string((const char *)sqlite3_column_text(stmt, 3)));
+        json_object_set_new(event, "event",     json_string((const char *)sqlite3_column_text(stmt, 4)));
+        json_object_set_new(event, "details",   json_string((const char *)sqlite3_column_text(stmt, 5)));
+        json_object_set_new(event, "duration",  json_integer(sqlite3_column_int64(stmt, 6)));
+        json_object_set_new(event, "fileset",   json_integer(sqlite3_column_int(stmt, 7)));
+        json_array_append_new(events, event);
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+
+    // Construct the JSON response
+    json_t *response = json_object();
+    json_object_set_new(response, "status", json_string("success"));
+    json_object_set_new(response, "count", json_integer(count));
+    json_object_set_new(response, "events", events);
+
+    // Send the JSON response
+    char *response_str = json_dumps(response, JSON_COMPACT);
+    size_t len = strlen(response_str);
+    unsigned char *buf = malloc(LWS_PRE + len);
+    memcpy(buf + LWS_PRE, response_str, len);
+    lws_write(wsi, buf + LWS_PRE, len, LWS_WRITE_TEXT);
+
+    // Cleanup the JSON response
+    free(buf);
+    free(response_str);
+    json_decref(response);
+
+    // Log the event
+    gettimeofday(&stop, NULL);
+    msecs = (int)((double)(stop.tv_usec - start.tv_usec) / 1000 + (double)(stop.tv_sec - start.tv_sec));
+    LogEvent(request_ip, request_app, request_client, eventtype, details, msecs, -1);
+}
+
+
+
+// Function to log events
+void LogEvent(const char *ipaddress, const char *app, const char *client, const char *event, const char *details, long duration, int fileset) {
+
+    sqlite3_stmt *stmt;
+
+    char sql[] = "INSERT INTO EVENTS (LOGSTAMP, IPADDRESS, APP, CLIENT, EVENT, DETAILS, DURATION, FILESET) VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)";
+
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        printf("Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+
+    sqlite3_bind_text(stmt, 1, ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, app, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, client, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, event, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 5, details, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 6, duration);
+    sqlite3_bind_int(stmt, 7, fileset);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        printf("Error executing SQL statement: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+}
 
 
 
@@ -99,32 +232,10 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
 
         case LWS_CALLBACK_RECEIVE: // 6
 
+	        // Global requests counter
             ws_requests++;
     
-            // Get the remaining packet payload
-            //size_t remaining = lws_remaining_packet_payload(wsi);
-            //bool is_final = lws_is_final_fragment(wsi);
-
-            // Allocate memory to store the complete message
-            //void *complete_message = malloc(len + remaining);
-            //memcpy(complete_message, in, len);
-
-            // Read the remaining packet payload
-            //size_t total_len = len;
-            //while (remaining > 0) {
-                //int bytes_read = lws_get_peer_write_allowance(wsi);
-                //if (bytes_read <= 0) {
-                    //printf("Error getting peer write allowance\n");
-                    //free(complete_message);
-                    //return -1;
-                //}
-//
-                //size_t copy_len = (bytes_read < remaining) ? bytes_read : remaining;
-                //memcpy((char *)complete_message + total_len, (char *)in + total_len, copy_len);
-                //total_len += copy_len;
-                //remaining -= copy_len;
-            //}
-//
+	        // Gather up the entire message and only the message
             if (message_length + len > MAX_MESSAGE_SIZE) {
                 // Handle error: message too large
                 printf("Error: Message too large\n");
@@ -133,26 +244,20 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
             }
             memcpy(message_buffer + message_length, in, len);
             message_length += len;
-
             if (!lws_is_final_fragment(wsi)) {
                 // Wait for more fragments
                 return 0;
             }
 
-            // Process the complete message here
+            // Process the complete message 
             json_t *request = json_loadb(message_buffer, message_length, 0, NULL);
             message_length = 0; // Reset buffer for the next message
 
-
-            // Parse the complete message as JSON
-//            json_t *request = json_loadb(complete_message, total_len, 0, NULL);
-//            free(complete_message);
-        
             // Get connection info 
             socklen_t len;
             struct sockaddr_storage addr;
-            char ipstr[INET6_ADDRSTRLEN];
-            int fd, port;
+            char request_ip[INET6_ADDRSTRLEN];
+            int fd, request_port;
             len = sizeof(addr);
             fd = lws_get_socket_fd(wsi);
             getpeername(fd, (struct sockaddr*)&addr, &len);
@@ -160,18 +265,26 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
             // deal with both IPv4 and IPv6:
             if (addr.ss_family == AF_INET) {
                 struct sockaddr_in *s = (struct sockaddr_in*)&addr;
-                port = ntohs(s->sin_port);
-                inet_ntop(AF_INET, &s->sin_addr, ipstr, INET6_ADDRSTRLEN);
+                request_port = ntohs(s->sin_port);
+                inet_ntop(AF_INET, &s->sin_addr, request_ip, INET6_ADDRSTRLEN);
             } else { // AF_INET6
                 struct sockaddr_in6 *s = (struct sockaddr_in6*)&addr;
-                port = ntohs(s->sin6_port);
-                inet_ntop(AF_INET6, &s->sin6_addr, ipstr, INET6_ADDRSTRLEN);
+                request_port = ntohs(s->sin6_port);
+                inet_ntop(AF_INET6, &s->sin6_addr, request_ip, INET6_ADDRSTRLEN);
             }
 
-             // printf("Peer IP address: %s\n", ipstr);
-             // printf("Peer port      : %d\n", port);
+            // printf("Peer IP address: %s\n", request_ip);
+            // printf("Peer port      : %d\n", request_port);
+            // printf("libws: Websocket callback (%d-Receive) from %s\n", reason, request_ip);
+	    
+            ws_session_data* data = (ws_session_data*)lws_wsi_user(wsi);
+            if (data) {
+	            if (strlen(data->x_forwarded_for) > 0) {
+	                strcat(request_ip, " -> ");
+	                strcat(request_ip, data->x_forwarded_for);
+		        }
+            }
 
-            printf("libws: Websocket callback (%d-Receive) from %s\n", reason, ipstr);
 
             if (request == NULL) {
                 // Invalid JSON request
@@ -214,11 +327,28 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
             } else {
                 // Valid JSON - let's check the type of request
                 const char *type = json_string_value(json_object_get(request, "type"));
-    
+                const char *request_key    = json_string_value(json_object_get(request, "agentKey"));
+                const char *request_app    = json_string_value(json_object_get(request, "agentApp"));
+                const char *request_client = json_string_value(json_object_get(request, "agentClient"));
+
+		        // Check if it is a valid request - Need agentKey, agentApp, and agentClient
+
+		        // Request is authorized, so let's figure out what the request is for
                 if (type && strcmp(type, "status") == 0) {
                     // Status - return basic system information mostly for testing
-                    printf("Agent: Status request\n");
-                    handle_status_request(wsi, db_path);
+                    printf("Agent: Status request from [ %s ] %s / %s\n", request_ip, request_app, request_client);
+                    handle_status_request(wsi, request_ip, request_app, request_client);
+
+                } else if (type && strcmp(type, "events") == 0) {
+                    // Events - return event log information
+                    printf("Agent: Events request from [ %s ] %s / %s\n", request_ip, request_app, request_client);
+                    const char *app     = json_string_value(json_object_get(request, "app"));
+                    const char *client  = json_string_value(json_object_get(request, "client"));
+                    const char *event   = json_string_value(json_object_get(request, "event"));
+                    const char *fileset = json_string_value(json_object_get(request, "fileset"));
+                    json_t *age_json = json_object_get(request, "age");
+                    int age = age_json ? json_integer_value(age_json) : 600;
+                    handle_events_request(wsi, app, client, event, fileset, age, request_ip, request_app, request_client);
 
                 } else {
                     printf("Agent: Unknown request\n");
@@ -246,90 +376,204 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
             return 0;
 
         case LWS_CALLBACK_ESTABLISHED: // 0
-            printf("libws: Websocket callback (%d-Connection)\n", reason);
+            uint8_t buf[LWS_PRE + 256];
+            int val = lws_hdr_copy(wsi, (char *)buf, sizeof(buf), WSI_TOKEN_X_FORWARDED_FOR);
+            if (val > 0) {
+                ws_session_data* data = (ws_session_data*)lws_wsi_user(wsi);
+                if (data) {
+                    strncpy(data->x_forwarded_for, (char*)buf, sizeof(data->x_forwarded_for) - 1);
+                    data->x_forwarded_for[sizeof(data->x_forwarded_for) - 1] = '\0'; // Ensure null-termination
+                }
+            }
+
+	        if (DEBUG_WS) {
+              printf("libws: Websocket callback (%d-Connection)\n", reason);
+              printf("Agent: Connection established from: (len %d) '%s'\n", (int)strlen((const char *)buf),buf);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_CLOSED: // 4
-            printf("libws: Websocket callback (%d-Closed)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-Closed)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_CLOSED_HTTP: // 5
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ClosedHTTP)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_RECEIVE_PONG: // 7
-            printf("libws: Websocket callback (%d-ReceivePong)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ReceivePong)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_SERVER_WRITEABLE: // 11
-            printf("libws: Websocket callback (%d-ServerWriteable)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ServerWriteable)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_HTTP: // 12
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-HTTP)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_FILTER_NETWORK_CONNECTION: // 17
-            printf("libws: Websocket callback (%d-FilterNetworkConnection)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-FilterNetworkConnection)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_FILTER_HTTP_CONNECTION: // 18
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-FilterHTTPConnection)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: // 19
-            printf("libws: Websocket callback (%d-ServerNewClientInstantiated)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ServerNewClientInstantiated)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: // 20 
-            printf("libws: Websocket callback (%d-FilterProtocolConnection)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-FilterProtocolConnection)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_PROTOCOL_INIT: // 27
-            printf("libws: Websocket callback (%d-ProtocolInit)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ProtocolInit)\n", reason);
+	        }
+	        // Initialize spot for data to be retained
+	        ws_session_data* setupdata = (
+                ws_session_data*)lws_protocol_vh_priv_zalloc(lws_get_vhost(wsi),
+                lws_get_protocol(wsi), 
+		        sizeof(ws_session_data)
+	        );
             return 0;
             break;
 
         case LWS_CALLBACK_PROTOCOL_DESTROY: // 28
-            printf("libws: Websocket callback (%d-ProtocolDestroy)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ProtocolDestroy)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_WSI_CREATE: // 29
             ws_connections++;
             ws_connections_total++;
-            printf("libws: Websocket callback (%d-WSICreate)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-WSICreate)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_WSI_DESTROY: // 30
             ws_connections--;
-            printf("libws: Websocket callback (%d-WSIDestroy)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-WSIDestroy)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_GET_THREAD_ID: // 31
-            printf("libws: Websocket callback (%d-GetThreadID)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-GetThreadID)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_ADD_POLL_FD: // 32
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-AddPollFD)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_DEL_POLL_FD: // 33
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-DelPollFD)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_CHANGE_MODE_POLL_FD: // 34
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-ChangeModePollFD)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_LOCK_POLL: // 35	
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-GetLockPoll)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_UNLOCK_POLL: // 36	
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-GetLockPoll)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_WS_PEER_INITIATED_CLOSE: // 38
-            printf("libws: Websocket callback (%d-WSPeerInitiatedClose)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-WSPeerInitiatedClose)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_HTTP_BIND_PROTOCOL: // 49
-            printf("libws: Websocket callback (%d-HTTPBindProtocol)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-HTTPBindProtocol)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_ADD_HEADERS: // 53
-            printf("libws: Websocket callback (%d-AddHeaders)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-AddHeaders)\n", reason);
+	        }
             return 0;
             break;
 
         case LWS_CALLBACK_EVENT_WAIT_CANCELLED: // 71
-            printf("libws: Websocket callback (%d-EventWaitCancelled)\n", reason);
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-EventWaitCancelled)\n", reason);
+	        }
             return 0;
             break;
 
-        case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: // 
-            printf("libws: Websocket callback (%d-HTTPConfirmUpgrade)\n", reason);
+        case LWS_CALLBACK_WS_SERVER_DROP_PROTOCOL: // 78
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-EventWaitCancelled)\n", reason);
+	        }
+            return 0;
+            break;
+
+        case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: // 86
+	        if (DEBUG_WS) {
+                printf("libws: Websocket callback (%d-HTTPConfirmUpgrade)\n", reason);
+	        }
             return 0;
             break;
 
@@ -341,17 +585,28 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
 
 
 // Function to handle status request
-void handle_status_request(struct lws *wsi, const char *db_path) {
-    
+void handle_status_request(struct lws *wsi, const char *request_ip, const char *request_app, const char *request_client) {
+
+    // Logging setup
+    char eventtype[MAX_LOG_EVENT_SIZE] = "Status";
+    char details[MAX_LOG_DETAIL_SIZE] = "";
+    struct timeval start, stop;
+    int msecs = 0;
+    gettimeofday(&start, NULL);
+    strcat(details, AGENT_VERSION);
+    strcat(details, " / ");
+    strcat(details, AGENT_DB_VERSION);
+
     // Construct the JSON response
     json_t *response = json_object();
     json_object_set_new(response, "status", json_string("success"));
+    json_object_set_new(response, "server", json_string(agent_name));
     json_object_set_new(response, "launchTime", json_string(launch_timestamp));
     json_object_set_new(response, "agentVersion", json_string(AGENT_VERSION));
     json_object_set_new(response, "databaseVersion", json_string(AGENT_DB_VERSION));
-    json_object_set_new(response, "databaseFilename", json_string(db_path));
-    json_object_set_new(response, "activeCconnections", json_integer(ws_connections));
-    json_object_set_new(response, "totalCconnections", json_integer(ws_connections_total));
+    json_object_set_new(response, "databaseFilename", json_string(database_name));
+    json_object_set_new(response, "activeConnections", json_integer(ws_connections));
+    json_object_set_new(response, "totalConnections", json_integer(ws_connections_total));
     json_object_set_new(response, "requests", json_integer(ws_requests));
 
     // Send the JSON response
@@ -365,8 +620,13 @@ void handle_status_request(struct lws *wsi, const char *db_path) {
     free(buf);
     free(response_str);
     json_decref(response);
-}
 
+    // Log the event
+    gettimeofday(&stop, NULL);
+    msecs = (int)((double)(stop.tv_usec - start.tv_usec) / 1000 + (double)(stop.tv_sec - start.tv_sec));
+    LogEvent(request_ip, request_app, request_client, eventtype, details, msecs, -1);
+}
+    
 
 
 int initialize_websocket_server(struct lws_context **context, int port) {
@@ -376,6 +636,7 @@ int initialize_websocket_server(struct lws_context **context, int port) {
     info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
+    info.options = 0;
 
     *context = lws_create_context(&info);
     if (!*context) {
@@ -541,13 +802,12 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
 void fswatch_callback(fsw_cevent const *const events, const unsigned int event_num, void *data) {
     MonitorSession *session = (MonitorSession *)data;
     int fileset_id = session->fileset_id;
-    char *db_path = session->db_path;
 
     for (unsigned int i = 0; i < event_num; ++i) {
         const char *path = events[i].path;
         const char *filename = path + strlen(session->filesetroot) + 1;
 
-        if (strncmp(filename, db_path, strlen(db_path)) == 0) {
+        if (strncmp(filename, database_name, strlen(database_name)) == 0) {
             continue;
         }
 
@@ -556,15 +816,18 @@ void fswatch_callback(fsw_cevent const *const events, const unsigned int event_n
 
             if (flag & Created) {
                 printf("%5d: C %s\n", fileset_id, path);
+                LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Created", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
                 if (state && strcmp(state, "deleted") == 0) {
                     update_file_state(fileset_id, filename, "created");
+
                 } else {
                     insert_file_record(fileset_id, filename, "created");
                 }
             } else if (flag & Updated) {
                 printf("%5d: U %s\n", fileset_id, path);
+                LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Updated", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
                 if (state && strcmp(state, "deleted") != 0) {
@@ -572,6 +835,7 @@ void fswatch_callback(fsw_cevent const *const events, const unsigned int event_n
                 }
             } else if (flag & Removed) {
                 printf("%5d: D %s\n", fileset_id, path);
+                LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Deleted", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
                 if (state && strcmp(state, "deleted") != 0) {
@@ -624,6 +888,22 @@ int create_database() {
         return 1;
     }
 
+    // Create EVENTS table
+    sql = "CREATE TABLE IF NOT EXISTS EVENTS ("
+          "LOGSTAMP TEXT, "
+          "IPADDRESS TEXT, "
+          "APP TEXT, "
+          "CLIENT TEXT, "
+          "EVENT TEXT, "
+          "DETAILS TEXT, "
+          "DURATION INTEGER, "
+          "FILESET INTEGER)";
+    rc = sqlite3_exec(db, sql, NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        printf("Error: Create EVENTS table failed: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+
     return 0;
 }
 
@@ -654,6 +934,7 @@ int check_database_version(const char *expected_version) {
 
     // No record returned - generate a new one
     } else if (rc == SQLITE_DONE) {
+	printf("Agent: Database created/updated\n");
         sqlite3_finalize(stmt);
         rc = sqlite3_prepare_v2(db, "INSERT INTO INFO (KEY, VALUE) VALUES ('db_version', ?)", -1, &stmt, NULL);
         if (rc != SQLITE_OK) {
@@ -670,7 +951,7 @@ int check_database_version(const char *expected_version) {
             return 1;
         }
 
-        printf("Agent: Database version: %s [CURRENT]\n", expected_version);
+        printf("Agent: Database version is %s [Current]\n", expected_version);
         sqlite3_finalize(stmt);
 
     // Something unexpected
@@ -703,7 +984,7 @@ int insert_default_fileset(const char *cwd, time_t now) {
 
     // Insert the default file set only if the FILESETS table is empty
     if (count == 0) {
-        printf("Agent: Initializing setting database defaults\n");
+        printf("Agent: Creating default fileset\n");
         rc = sqlite3_prepare_v2(db, "INSERT INTO FILESETS (FILESET, FILESETNAME, FILESETROOT, FILESETDATE) VALUES (?, ?, ?, ?)", -1, &stmt, NULL);
         if (rc != SQLITE_OK) {
             printf("Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
@@ -729,76 +1010,84 @@ int insert_default_fileset(const char *cwd, time_t now) {
 }
 
 // Run at startup
-int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port) {
+int load_configuration(const char *config_file, char **json_str, json_t **root) {
     FILE *fp = fopen(config_file, "r");
 
     // If configuration not found, create one out of thin air, load that, and then continue
     if (!fp) {
-        printf("Configuration file '%s' not found. Creating default configuration.\n", config_file);
-
-        // Create default configuration
-        fp = fopen(config_file, "w");
-        if (!fp) {
-            printf("Error creating configuration file: %s\n", config_file);
-            return 1;
-        }
-
-        fprintf(fp, "{\n    \"Agent Database\": \"agentc.sqlite\",\n    \"Agent Websocket\": 23432\n}\n");
-        fclose(fp);
-
-        fp = fopen(config_file, "r");
-        if (!fp) {
-            printf("Error opening configuration file: %s\n", config_file);
-            return 1;
-        }
+        printf("Configuration file '%s' not found.\n", config_file);
+	return 1;
     }
 
-    printf("Agent: Loading configuration from '%s'\n", config_file);
-
+    // Load configuration file
+    printf("Agent: Using JSON configuration: '%s'\n", config_file);
     fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+
+    // Get JSON
+    printf("Agent: Parsing JSON configuration\n");
 
     *json_str = malloc(fsize + 1);
     fread(*json_str, 1, fsize, fp);
     (*json_str)[fsize] = '\0';
     fclose(fp);
 
-    printf("Agent: Parsing configuration\n");
-
     json_error_t error;
     *root = json_loads(*json_str, 0, &error);
     if (!*root) {
-        printf("Error parsing JSON configuration file: %s\n", error.text);
+        printf("Error parsing JSON configuration: %s\n", error.text);
         free(*json_str);
         return 1;
     }
 
-    printf("Agent: Identifying database\n");
-
-    json_t *db_path_json = json_object_get(*root, "Agent Database");
-    if (!db_path_json || !json_is_string(db_path_json)) {
-        printf("Error reading 'Agent Database' from configuration\n");
+    // Start with Agent Server
+    printf("Agent: Configuring server\n");
+    json_t *server_json = json_object_get(*root, "Agent Server");
+    if (!server_json) {
+        printf("Error reading 'Agent Server' from configuration\n");
         json_decref(*root);
         free(*json_str);
         return 1;
     }
 
-    *db_path = strdup(json_string_value(db_path_json));
-    printf("Agent: Database identified as '%s'\n", *db_path);
+    // Agent Server -> Name 
+    // Global: agent_name
+    printf("Agent: Configuring name\n");
+    json_t *agent_name_json = json_object_get(server_json, "Name");
+    // Not fatal
+    if (!agent_name_json || !json_is_string(agent_name_json)) {
+        printf("Error reading 'Agent Server/Name' from configuration\n");
+        agent_name = strdup(AGENT_APP);
+    } else {
+        agent_name = strdup(json_string_value(agent_name_json));
+    }
 
-    printf("Agent: Identifying WebSocket port\n");
+    // Agent Server -> Database
+    // Global: database_name
+    printf("Agent: Configuring database\n");
+    json_t *database_name_json = json_object_get(server_json, "Database");
+    if (!database_name_json || !json_is_string(database_name_json)) {
+        printf("Error reading 'Agent Server/Database' from configuration\n");
+        json_decref(*root);
+        free(*json_str);
+        return 1;
+    }
+    database_name = strdup(json_string_value(database_name_json));
 
-    json_t *ws_port_json = json_object_get(*root, "Agent Websocket");
+    // Agent Server -> Port
+    // Global: ws_port
+    printf("Agent: Configuring network\n");
+    json_t *ws_port_json = json_object_get(server_json, "Port");
     if (!ws_port_json || !json_is_integer(ws_port_json)) {
-        printf("Error reading 'Agent Websocket' from configuration\n");
+        printf("Error reading 'Agent Server/Port' from configuration\n");
         json_decref(*root);
         free(*json_str);
         return 1;
     }
+    ws_port = json_integer_value(ws_port_json);
 
-    *ws_port = json_integer_value(ws_port_json);
-    printf("Agent: WebSocket port identified as %d\n", *ws_port);
+    printf(SEPARATOR);
 
     return 0;
 }
@@ -862,7 +1151,7 @@ XXH64_hash_t calculate_file_hash(const char *path) {
 }
 
 void format_hash_string(XXH64_hash_t hash, char *hash_str) {
-    snprintf(hash_str, 17, "%016llx", hash);
+    snprintf(hash_str, 17, "%016lx", hash);
 }
 
 void print_summary(int fileset_id, int fileCount, int matchedCount, int addedCount, int updatedCount, int missingCount) {
@@ -882,21 +1171,21 @@ int main(int argc, char *argv[]) {
     time_t now = time(NULL);
     struct tm *now_tm = localtime(&now);
     strftime(launch_timestamp, sizeof(launch_timestamp), "%Y-%m-%d %H:%M:%S", now_tm);
-    printf("Agent: v%s online at %s\n", AGENT_VERSION, launch_timestamp);
+    printf("%sAgent: %s online at %s\n%s", SEPARATOR, AGENT_VERSION, launch_timestamp, SEPARATOR);
 
     // Set up signal handler for Ctrl+C
     signal(SIGINT, signal_handler);
 
     // Load configuration
-    char *json_str;
     json_t *root;
-    char *db_path;
-    if (load_configuration(argv[1], &json_str, &root, &db_path, &ws_port) != 0) {
+    char *json_str;
+    if (load_configuration(argv[1], &json_str, &root) != 0) {
         return 1;
     }
 
     // Open database
-    int rc = sqlite3_open(db_path, &db);
+    printf("Agent: Using dataase: '%s'\n", database_name);
+    int rc = sqlite3_open(database_name, &db);
     if (rc != SQLITE_OK) {
         printf("Error opening SQLite database: %s\n", sqlite3_errmsg(db));
         free(json_str);
@@ -910,6 +1199,8 @@ int main(int argc, char *argv[]) {
         sqlite3_close(db);
         return 1;
     }
+
+    LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "Agent Started", AGENT_VERSION, 0, 0);
 
     // Check the database version
     if (check_database_version(AGENT_DB_VERSION) != 0) {
@@ -950,7 +1241,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    printf("Agent: Initializing monitors\n");
+    printf("%sAgent: Initializing fileset monitors\n", SEPARATOR);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int fileset_id = sqlite3_column_int(stmt, 0);
@@ -965,7 +1256,7 @@ int main(int argc, char *argv[]) {
 
         fsw_set_recursive(handle, true);
 
-        MonitorSession session = {handle, fileset_id, strdup(filesetname), strdup(filesetroot), strdup(db_path)};
+        MonitorSession session = {handle, fileset_id, strdup(filesetname), strdup(filesetroot)};
         sessions = realloc(sessions, (session_count + 1) * sizeof(MonitorSession));
         sessions[session_count++] = session;
 
@@ -976,7 +1267,6 @@ int main(int argc, char *argv[]) {
             fsw_destroy_session(handle);
             free(session.filesetname);
             free(session.filesetroot);
-            free(session.db_path);
             session_count--;
         }
         printf("%5d: %s\n", fileset_id, strdup(filesetname));
@@ -992,18 +1282,24 @@ int main(int argc, char *argv[]) {
     }
 
     // WebSocket server initialization
-    printf("Agent: Initializing websocket interface\n",ws_port);
+    printf("%sAgent: Initializing websocket interface\n", SEPARATOR);
+    printf("Agent: Using websocket name: %s\n", agent_name);
+    printf("Agent: Using websocket port: %d\n", ws_port);
+    printf("Agent: Using websocket protocol: %s\n", AGENT_PROTOCOL);
 
     struct lws_context_creation_info info;
-
     memset(&info, 0, sizeof(info));
     info.port = ws_port;
     info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
+    info.options = 0;
 
-    //lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, custom_log_callback);
-    lws_set_log_level(LLL_ERR | LLL_WARN, custom_log_callback);
+    if (DEBUG_WS) {
+        lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO | LLL_DEBUG, custom_log_callback);
+    } else {
+        lws_set_log_level(LLL_ERR | LLL_WARN, custom_log_callback);
+    }
 
     struct lws_context *ws_context = NULL;
     if (initialize_websocket_server(&ws_context, ws_port) != 0) {
@@ -1014,18 +1310,20 @@ int main(int argc, char *argv[]) {
     }
 
     // Main loop
-    printf("Agent: Waiting...\n");
+    printf("%sAgent: Waiting...\n%s", SEPARATOR, SEPARATOR);
+
     while (running) {
         lws_service(ws_context, 100);
         usleep(100);
     }
 
     // Clean up
+    LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "Agent Stopped", AGENT_VERSION, 0, 0);
+
     for (int i = 0; i < session_count; i++) {
         fsw_destroy_session(sessions[i].handle);
         free(sessions[i].filesetname);
         free(sessions[i].filesetroot);
-        free(sessions[i].db_path);
     }
     free(sessions);
     free(json_str);
@@ -1035,3 +1333,5 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
+
