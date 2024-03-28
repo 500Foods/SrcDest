@@ -8,6 +8,13 @@ Beyond that, it can also provide other information like the current status of it
 This was written in C primarily to ensure that it was as performant and as light a touch as possible for any system it is running on. We live in an age where systems
 typically have dozens of these kinds of agents running amok, and while contributing to the clutter is likely unavoidable, we can at least try and be polite about it.
 
+## REST API Proxy
+A pet peeve of mine is when projects of various flavors and complexities offer up different pathways to their data, such as with a REST API and also a WebSockets API.
+Or perhaps its a REST API and a GraphQL API. But they offer up pathways that are then all required, as some data is available via one pathway, and other data via 
+another. So instead of building one client for a service, we have to build multiple. With that in mind, this project has been equipped with a REST API proxy facility.
+This means that we can pass it a Swagger JSON file and it will add that to its WebSockets API automatically, so we don't have to revert to using the REST API if we
+are already connected with the WebSockets API. Fun!
+
 ## Configuration
 A sample JSON configuration file has been provided, showing the key bits that are needed to get this up and running.
 This would typically be customized for each system (the Agent Server part) while each such system would also be listed (the Agent Systems part).
