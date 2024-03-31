@@ -27,6 +27,7 @@ selecting a system to connect to will give you the ability to send and receive m
 
 ## Dependencies - C
 While we're not doing anything particularly interesting here, we do need a few extra bits.
+- curl -Used for sending SMTP e-mails and for the REST proxy 
 - libwebsockets - The websockets interface, naturally
 - jansson - A C library for handling JSON
 - fswatch - To monitor OS-level file changes in a multiplatform manner
