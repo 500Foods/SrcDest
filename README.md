@@ -1,9 +1,10 @@
 # SrcDest
 This is a multi-purpose tool used, essentially, to copy files from a Source (Src) location to a Destination (Dest). There are plenty of use cases where this might be necessary.
 
-1. Deployment. Files on a development machine might be copied to a remote web server or hosted service.
-2. Backups.  Simply copying a set of files from one location to another, so as to have multiple copies in case of the loss of the original files.
+1. Project deployment. Files on a development machine might be copied to a remote web server or hosted service.
+2. Backups. Simply copying a set of files from one location to another, so as to have multiple copies in case of the loss of the original files.
 3. Redundancy. Duplicating files in multiple locations to provide more pathways for accessing them.
+4. Consolidation. Using one service as a proxy for multiple other services.
 
 ## Repository Information
 [![Count Lines of Code](https://github.com/500Foods/SrcDest/actions/workflows/main.yml/badge.svg)](https://github.com/500Foods/SrcDest/actions/workflows/main.yml)
