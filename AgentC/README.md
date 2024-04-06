@@ -51,6 +51,7 @@ In particular, playing nice with command-line history was a bit of work. With a 
 - websockets - No surprise there
 - Prompt Tookit - Made the seemingly impossible work pretty great
 - AsyncIO - Wouldn't be here without it
+- Tkinter - the UI library that made AgentU possible
 
 ## Remote Access
 One of the main options when setting up an Agent is to select the port that it runs on. Currently, it will try and respond to all requests on that port. 
