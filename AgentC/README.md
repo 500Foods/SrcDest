@@ -32,6 +32,10 @@ Having a shiny new C-based WebSocket server is great and all, but not of much us
 To help with that, a Python script called AgentP has been provided. It can be pointed at the same JSON configuration file, and then 
 selecting a system to connect to will give you the ability to send and receive messages (JSON messages, that is). 
 
+## AgentU
+And having a shiny new Python client is great and all, but maybe you're more interested in something with an actual UI? Well, here's AgentP to the rescue.
+This is a rework of AgentP that uses Python and a UI library to give you the full UI experience. It isn't fancy, but maybe more friendly than the command line.
+
 ## Dependencies - C
 While we're not doing anything particularly interesting here, we do need a few extra bits.
 - curl -Used for sending SMTP e-mails and for the REST proxy 
