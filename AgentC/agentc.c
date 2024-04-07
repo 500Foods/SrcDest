@@ -248,7 +248,10 @@ void log_message(const char *format, ...) {
 
     va_end(args);
     va_end(args_copy);
+    fflush(stdout);
+    fflush(stderr);
 }
+
 struct upload_status {
   size_t bytes_read;
   const char *payload_text;
