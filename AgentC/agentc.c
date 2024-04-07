@@ -1,22 +1,32 @@
 // agentc.c
 
 // AGENT constants
+#define AGENT_SERVER        "AGENT_SERVER"
+#define AGENT_NAME          "AGENT_NAME"
 #define AGENT_AUTHOR        "Andrew Simard"
-#define AGENT_VERSION       "AgentC v1.0.0"
-#define AGENT_DB_VERSION    "AgentC DB v1.0.0"
+#define AGENT_VERSION       "v1.0.0"
+#define AGENT_DB_VERSION    "v1.0.0"
 #define AGENT_IP            "127.0.0.1"
 #define AGENT_PORT          23432
 #define AGENT_PROTOCOL      "agentc-protocol"
 #define AGENT_APP           "AgentC"
 #define AGENT_CLIENT        "CLI"
-#define SEPARATOR           "-------------------------\n"
+#define SEPARATOR           "-------------------------------------------\n"
+
+// Various Limits
 #define MAX_MESSAGE_SIZE    65536
 #define MAX_LOG_SIZE        10000
 #define MAX_LOG_EVENT_SIZE  30
 #define MAX_LOG_DETAIL_SIZE 100
 #define MAX_REST_SERVICES   10
-#define DEBUG_WS            0  
+
+// Hash Seed
 #define XXH_STATIC_SEED     1234567
+
+// Debug Flags
+#define DEBUG_WS            0  
+#define DEBUG_SMTP          0
+
 
 // Standard C libraries 
 #include <stdio.h>
@@ -24,14 +34,22 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
-#include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
 #include <time.h>
-#include <sys/types.h>
 #include <sys/stat.h>
-#include <dirent.h>
 #include <arpa/inet.h>
+#include <sys/resource.h>
+
+// Multiplatform - just to get thread counts?!
+#ifdef _WIN32
+  #include <windows.h>
+  #include <tlhelp32.h>
+#else
+  #include <dirent.h>
+  #include <sys/types.h>
+  #include <unistd.h>
+#endif
 
 // Third-party C libraries 
 #include <curl/curl.h>                // For sending e-mails, REST proxy
@@ -47,27 +65,36 @@
 
 char log_buffer[MAX_LOG_SIZE]; 
 char launch_timestamp[20];
-volatile sig_atomic_t running = 1;
+
+// For the Ctrl+C handler
+volatile sig_atomic_t g_running = 1;
+
+char *g_agent_server;
+char *g_agent_name;
+char *g_database_name;
 
 sqlite3 *db;
-char *db_path;
 
 int ws_port = AGENT_PORT;
 int ws_connections;
 int ws_connections_total;
 int ws_requests;
 
+int g_fsw_session_count = 0;
+pthread_t *g_signal_threads;
+
 CURLM *curlm;
 static char message_buffer[MAX_MESSAGE_SIZE];
 static size_t message_length = 0;
 
-char *smtp_host; 
-int   smtp_port; 
-char *smtp_user;
-char *smtp_pass;
-char *smtp_from;
-char *smtp_name;
-char *smtp_mail; 
+char *g_smtp_host; 
+int   g_smtp_port; 
+char *g_smtp_user;
+char *g_smtp_pass;
+char *g_smtp_from;
+char *g_smtp_name;
+char *g_smtp_warn;
+char *g_smtp_info;
 
 
 
@@ -89,7 +116,7 @@ typedef struct {
 } service_t;
 
 service_t *services = NULL;
-int num_services = 0;
+int g_num_rest_services = 0;
 
 
 
@@ -142,7 +169,7 @@ void fswatch_callback(fsw_cevent const *const events, const unsigned int event_n
 int create_database();
 int check_database_version(const char *expected_version);
 int insert_default_fileset(const char *cwd, time_t now);
-int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port);
+int load_configuration(const char *config_file);
 void update_file_state(int fileset_id, const char *filename, const char *state);
 void insert_file_record(int fileset_id, const char *filename, const char *state);
 const char *get_file_state(int fileset_id, const char *filename, sqlite3_int64 *mtime);
@@ -159,7 +186,6 @@ typedef struct {
     int fileset_id;
     char *filesetname;
     char *filesetroot;
-    char *db_path;
 } MonitorSession;
 
 // WebSocket protocol structure
@@ -210,6 +236,16 @@ void log_message(const char *format, ...) {
         strncat(log_buffer, message, remaining_space - 1);
     }
 
+    // Check if the message starts with "Error"
+    if (strncmp(message, "Error", 5) == 0) {
+        char subject[256];
+        char truncated_message[128];
+        strncpy(truncated_message, message, sizeof(truncated_message) - 1);
+        truncated_message[sizeof(truncated_message) - 1] = '\0';
+        snprintf(subject, sizeof(subject), "[%s] %s: Error detected: %s", g_agent_server, g_agent_name, truncated_message);
+        send_email(subject, g_smtp_warn);
+    }
+
     va_end(args);
     va_end(args_copy);
 }
@@ -253,13 +289,12 @@ void send_email(const char *subject, const char *to_list)
   // Compose the email body
   char email_body[MAX_LOG_SIZE + 1024];
   snprintf(email_body, sizeof(email_body),
-           "Date: Thu, 28 Mar 2024 21:54:29 +1100\r\n"
            "To: %s\r\n"
            "From: %s\r\n"
-           "Subject: %s\r\n"
+           "Subject: [%s] %s: %s\r\n"
            "\r\n"
            "%s\r\n",
-           to_list, smtp_from, subject, log_buffer);
+           to_list, g_smtp_from, g_agent_server, g_agent_name, subject, log_buffer);
 
   upload_ctx.payload_text = email_body;
 
@@ -267,15 +302,15 @@ void send_email(const char *subject, const char *to_list)
   if (curl) {
     // Set the SMTP URL
     char smtp_url[256];
-    snprintf(smtp_url, sizeof(smtp_url), "smtp://%s:%d", smtp_host, smtp_port);
+    snprintf(smtp_url, sizeof(smtp_url), "smtp://%s:%d", g_smtp_host, g_smtp_port);
     curl_easy_setopt(curl, CURLOPT_URL, smtp_url);
 
     // Set the SMTP username and password
-    curl_easy_setopt(curl, CURLOPT_USERNAME, smtp_user);
-    curl_easy_setopt(curl, CURLOPT_PASSWORD, smtp_pass);
+    curl_easy_setopt(curl, CURLOPT_USERNAME, g_smtp_user);
+    curl_easy_setopt(curl, CURLOPT_PASSWORD, g_smtp_pass);
 
     // Set the email sender and recipients
-    curl_easy_setopt(curl, CURLOPT_MAIL_FROM, smtp_from);
+    curl_easy_setopt(curl, CURLOPT_MAIL_FROM, g_smtp_from);
     recipients = curl_slist_append(recipients, to_list);
     curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
 
@@ -285,10 +320,15 @@ void send_email(const char *subject, const char *to_list)
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
 
     // Enable verbose output for debugging
-    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    if (DEBUG_SMTP == 1) {
+      curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
 
     // Send the email
+    log_message("Agent: Sending message [%s] to [%s]\n", subject, to_list);
     res = curl_easy_perform(curl);
+
+    // Check it
     if (res != CURLE_OK) {
       fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     }
@@ -298,19 +338,6 @@ void send_email(const char *subject, const char *to_list)
     curl_easy_cleanup(curl);
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -468,7 +495,7 @@ void handle_rest_proxy_request(struct lws *wsi, service_t *service, endpoint_t *
         if (session_data) {
             // Find the index of the service in the services array
             int service_index = -1;
-            for (size_t i = 0; i < num_services; i++) {
+            for (int i = 0; i < g_num_rest_services; i++) {
                 if (strcmp(services[i].name, service->name) == 0) {
                     service_index = i;
                     break;
@@ -635,6 +662,7 @@ void LogEvent(const char *ipaddress, const char *app, const char *client, const 
     }
 
     sqlite3_finalize(stmt);
+    // log_message("Agent: Logged Event: %s / %s\n", event, details);
 }
 
 
@@ -718,9 +746,9 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
                 const char *request_client = json_string_value(json_object_get(request, "agentClient"));
 
 		// Store request information in the WebSocket user information
-                strncpy(session_data->request_ip, request_ip, sizeof(session_data->request_ip));
-                strncpy(session_data->request_app, request_app, sizeof(session_data->request_app));
-                strncpy(session_data->request_client, request_client, sizeof(session_data->request_client));
+                if (request_key != NULL) strncpy(session_data->request_ip, request_ip, sizeof(session_data->request_ip));
+                if (request_app != NULL) strncpy(session_data->request_app, request_app, sizeof(session_data->request_app));
+                if (request_client != NULL) strncpy(session_data->request_client, request_client, sizeof(session_data->request_client));
 
 		// Check if it is a valid request - Need agentKey, agentApp, and agentClient
 
@@ -752,10 +780,10 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
                         service_t *matched_service = NULL;
                         endpoint_t *matched_endpoint = NULL;
         
-                        for (size_t i = 0; i < num_services; i++) {
+                        for (int i = 0; i < g_num_rest_services; i++) {
                             if (strcmp(services[i].name, service) == 0) {
                                 matched_service = &services[i];
-                                for (size_t j = 0; j < matched_service->num_endpoints; j++) {
+                                for (int j = 0; j < matched_service->num_endpoints; j++) {
                                     if (strcmp(matched_service->endpoints[j].path, endpoint) == 0) {
                                         matched_endpoint = &matched_service->endpoints[j];
                                         break;
@@ -776,7 +804,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
                             ws_session_data *session_data = (ws_session_data *)lws_wsi_user(wsi);
                             if (session_data) {
                                 int service_index = -1;
-                                for (size_t i = 0; i < num_services; i++) {
+                                for (int i = 0; i < g_num_rest_services; i++) {
                                     if (strcmp(services[i].name, service) == 0) {
                                         service_index = i;
                                         break;
@@ -1010,7 +1038,7 @@ int ws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, v
 	    if (DEBUG_WS) {
                 log_message("libws: Websocket callback (%d-EventWaitCancelled)\n", reason);
 	    }
-	    log_message("ERROR: Connection dropped due to protocol mismatch\n");
+	    // log_message("ERROR: Connection dropped due to protocol mismatch\n");
             return 0;
             break;
 
@@ -1033,17 +1061,61 @@ void handle_status_request(struct lws *wsi) {
 
     // Initialize Logging
     LogInfo log_info = LogInitialize("Status");
+    
+    // Get memory usage information
+    struct rusage usage;
+    long resident_set_size = 0;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        resident_set_size = usage.ru_maxrss;
+    }
+
+  #ifdef WIN32
+    // Get the number of active threads - Windows
+    int active_threads = 0;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 thread_entry;
+        thread_entry.dwSize = sizeof(THREADENTRY32);
+        if (Thread32First(snapshot, &thread_entry)) {
+            do {
+                if (thread_entry.th32OwnerProcessID == GetCurrentProcessId()) {
+                    active_threads++;
+                }
+            } while (Thread32Next(snapshot, &thread_entry));
+        }
+        CloseHandle(snapshot);
+    }
+  #else   
+    // Get the number of active threads - Linux
+    int active_threads = 0;
+    char task_path[256];
+    snprintf(task_path, sizeof(task_path), "/proc/%d/task", getpid());
+    DIR *task_dir = opendir(task_path);
+    if (task_dir != NULL) {
+        struct dirent *entry;
+        while ((entry = readdir(task_dir)) != NULL) {
+            if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                active_threads++;
+            }
+        }
+        closedir(task_dir);
+    }
+  #endif
 
     // Construct the JSON response
     json_t *response = json_object();
     json_object_set_new(response, "status", json_string("success"));
     json_object_set_new(response, "launchTime", json_string(launch_timestamp));
+    json_object_set_new(response, "agentServer", json_string(g_agent_server));
+    json_object_set_new(response, "agentName", json_string(g_agent_name));
     json_object_set_new(response, "agentVersion", json_string(AGENT_VERSION));
     json_object_set_new(response, "databaseVersion", json_string(AGENT_DB_VERSION));
-    json_object_set_new(response, "databaseFilename", json_string(db_path));
+    json_object_set_new(response, "databaseFilename", json_string(g_database_name));
     json_object_set_new(response, "activeConnections", json_integer(ws_connections));
     json_object_set_new(response, "totalConnections", json_integer(ws_connections_total));
     json_object_set_new(response, "requests", json_integer(ws_requests));
+    json_object_set_new(response, "memoryHighWatermark", json_integer(resident_set_size));
+    json_object_set_new(response, "activeThreads", json_integer(active_threads));
 
     // Send the JSON response
     char *response_str = json_dumps(response, JSON_COMPACT);
@@ -1095,10 +1167,24 @@ void websocket_log_callback(int level, const char *line) {
    log_message("%s", line);
 }
 
+//
+void cleanup_handler(void *arg) {
+    MonitorSession *session = (MonitorSession *)arg;
+    fsw_destroy_session(session->handle);
+    free(session->filesetname);
+    free(session->filesetroot);
+}
+
 // Launch fswatch thread
 void *monitor_thread(void *arg) {
     MonitorSession *session = (MonitorSession *)arg;
+
+    // Cleanup handler
+    pthread_cleanup_push(cleanup_handler, session);
+
     fsw_start_monitor(session->handle);
+
+    pthread_cleanup_pop(1);
     return NULL;
 }
 
@@ -1106,7 +1192,12 @@ void *monitor_thread(void *arg) {
 // Deal with Ctrl+C
 void signal_handler(int signum) {
     if (signum == SIGINT) {
-        running = 0;
+        g_running = 0;
+	
+	// Cancel all signal handling threads
+        for (int i = 0; i < g_fsw_session_count; i++) {
+            pthread_cancel(g_signal_threads[i]);
+        }
     }
 }
 
@@ -1180,6 +1271,7 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
                 sqlite3_bind_text(insert_stmt, 8, "created", -1, SQLITE_STATIC);
                 addedCount++;
             }
+	    free((void *)state);
 
             rc = sqlite3_step(insert_stmt);
             if (rc != SQLITE_DONE) {
@@ -1237,21 +1329,36 @@ void refresh_fileset(int fileset_id, const char *filesetroot) {
 void fswatch_callback(fsw_cevent const *const events, const unsigned int event_num, void *data) {
     MonitorSession *session = (MonitorSession *)data;
     int fileset_id = session->fileset_id;
-    char *db_path = session->db_path;
 
     for (unsigned int i = 0; i < event_num; ++i) {
         const char *path = events[i].path;
-        const char *filename = path + strlen(session->filesetroot) + 1;
+	const char *filename = NULL;
+size_t filesetroot_len = strnlen(session->filesetroot, PATH_MAX);
+if (strncmp(path, session->filesetroot, filesetroot_len) == 0 && path[filesetroot_len] == '/') {
+    filename = path + filesetroot_len + 1;
+}
 
-        if (strncmp(filename, db_path, strlen(db_path)) == 0) {
-            continue;
-        }
+	// Just a silly thing - ignore the database file we're using.
+	// This only comes up if we're monitoring our own database path.
+	// Generally, we probably shouldn't be monitoring databases anyway.
+	// We know they change continually, so no point being notified about it.
+	// This is more a safety measure as it just triggers endless events.
+	
+	// Exclude the database file, files ending with ".swp", and files ending with ".tmp"
+	if (filename != NULL) {
+    size_t filename_len = strnlen(filename, PATH_MAX);
+    if (strncmp(filename, g_database_name, strnlen(g_database_name, PATH_MAX)) == 0 ||
+        (filename_len > 4 && strncmp(filename + filename_len - 4, ".swp", 4) == 0) ||
+        (filename_len > 4 && strncmp(filename + filename_len - 4, ".tmp", 4) == 0)) {
+        continue;
+    }
+}
 
         for (unsigned int j = 0; j < events[i].flags_num; ++j) {
             enum fsw_event_flag flag = events[i].flags[j];
 
             if (flag & Created) {
-                log_message("%5d: C %s\n", fileset_id, path);
+                log_message("%5d: C %.*s\n", fileset_id, (int)strnlen(path, PATH_MAX), path);
                 LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Created", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
@@ -1261,22 +1368,25 @@ void fswatch_callback(fsw_cevent const *const events, const unsigned int event_n
                 } else {
                     insert_file_record(fileset_id, filename, "created");
                 }
+		free((void *)state);
             } else if (flag & Updated) {
-                log_message("%5d: U %s\n", fileset_id, path);
+                log_message("%5d: U %.*s\n", fileset_id, (int)strnlen(path, PATH_MAX), path);
                 LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Updated", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
                 if (state && strcmp(state, "deleted") != 0) {
                     update_file_state(fileset_id, filename, "updated");
                 }
+		free((void *)state);
             } else if (flag & Removed) {
-                log_message("%5d: D %s\n", fileset_id, path);
+                log_message("%5d: D %.*s\n", fileset_id, (int)strnlen(path, PATH_MAX), path);
                 LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "File Deleted", path, 0, fileset_id);
                 sqlite3_int64 db_mtime;
                 const char *state = get_file_state(fileset_id, filename, &db_mtime);
                 if (state && strcmp(state, "deleted") != 0) {
                     update_file_state(fileset_id, filename, "deleted");
                 }
+		free((void *)state);
             }
         }
     }
@@ -1446,7 +1556,10 @@ int insert_default_fileset(const char *cwd, time_t now) {
 }
 
 // Run at startup
-int load_configuration(const char *config_file, char **json_str, json_t **root, char **db_path, int *ws_port) {
+int load_configuration(const char *config_file) {
+    
+    json_t *root;
+    char *json_str;
     FILE *fp = fopen(config_file, "r");
 
     // If configuration not found, create one out of thin air, load that, and then continue
@@ -1461,61 +1574,82 @@ int load_configuration(const char *config_file, char **json_str, json_t **root, 
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
+   
+    /////////////////////////////////////////
     // Get JSON
+    /////////////////////////////////////////
     log_message("Agent: Parsing JSON configuration\n");
 
-    *json_str = malloc(fsize + 1);
-    fread(*json_str, 1, fsize, fp);
-    (*json_str)[fsize] = '\0';
+    json_str = malloc(fsize + 1);
+    fread(json_str, 1, fsize, fp);
+    (json_str)[fsize] = '\0';
     fclose(fp);
 
     json_error_t error;
-    *root = json_loads(*json_str, 0, &error);
-    if (!*root) {
+    root = json_loads(json_str, 0, &error);
+    if (!root) {
         log_message("Error parsing JSON configuration: %s\n", error.text);
-        free(*json_str);
+        free(json_str);
         return 1;
     }
+    free(json_str);
 
     // Start with Agent Server
     log_message("Agent: Configuring server\n");
-    json_t *server_json = json_object_get(*root, "Agent Server");
+    json_t *server_json = json_object_get(root, "Agent Server");
     if (!server_json) {
         log_message("Error reading 'Agent Server' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
+    } 
+
+    // Agent Server -> Server  
+    json_t *agent_server_json = json_object_get(server_json, "Server");
+    if (!agent_server_json || !json_is_string(agent_server_json)) {
+        g_agent_server = strdup(AGENT_SERVER);
+    } else {
+        g_agent_server = strdup(json_string_value(agent_server_json));
     }
+    log_message("Agent: Configuring Agent on [ %s ]\n", g_agent_server);
+
+    // Agent Server -> Name    
+    json_t *agent_name_json = json_object_get(server_json, "Name");
+    if (!agent_name_json || !json_is_string(agent_name_json)) {
+        g_agent_name = strdup(AGENT_NAME);
+    } else {
+        g_agent_name = strdup(json_string_value(agent_name_json));
+    }
+    log_message("Agent: Configuring Agent as [ %s ]\n", g_agent_name);
 
     // Agent Server -> Database
     log_message("Agent: Configuring database\n");
-    json_t *db_path_json = json_object_get(server_json, "Database");
-    if (!db_path_json || !json_is_string(db_path_json)) {
+    json_t *database_name_json = json_object_get(server_json, "Database");
+    if (!database_name_json || !json_is_string(database_name_json)) {
         log_message("Error reading 'Agent Server/Database' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    *db_path = strdup(json_string_value(db_path_json));
+    g_database_name = strdup(json_string_value(database_name_json));
 
     // Agent Server -> Port
     log_message("Agent: Configuring network\n");
     json_t *ws_port_json = json_object_get(server_json, "Port");
     if (!ws_port_json || !json_is_integer(ws_port_json)) {
         log_message("Error reading 'Agent Server/Port' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    *ws_port = json_integer_value(ws_port_json);
+    ws_port = json_integer_value(ws_port_json);
 
+    
+    /////////////////////////////////////////
     // Mail Server
-    log_message("Agent: Configuring mail server\n");
-    json_t *mail_server_json = json_object_get(*root, "Mail Server");
+    /////////////////////////////////////////
+    log_message("Agent: Configuring SMTP mail server\n");
+    json_t *mail_server_json = json_object_get(root, "Mail Server");
     if (!mail_server_json || !json_is_object(mail_server_json)) {
         log_message("Error reading 'Mail Server' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
 
@@ -1523,115 +1657,124 @@ int load_configuration(const char *config_file, char **json_str, json_t **root, 
     json_t *smtp_host_json = json_object_get(mail_server_json, "SMTP Host");
     if (!smtp_host_json || !json_is_string(smtp_host_json)) {
         log_message("Error reading 'Mail Server/SMTP Host' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_host = strdup(json_string_value(smtp_host_json));
+    g_smtp_host = strdup(json_string_value(smtp_host_json));
 
     // Mail Server -> SMTP Port
     json_t *smtp_port_json = json_object_get(mail_server_json, "SMTP Port");
     if (!smtp_port_json || !json_is_integer(smtp_port_json)) {
         log_message("Error reading 'Mail Server/SMTP Port' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_port = json_integer_value(smtp_port_json);
+    g_smtp_port = json_integer_value(smtp_port_json);
 
     // Mail Server -> SMTP User
     json_t *smtp_user_json = json_object_get(mail_server_json, "SMTP User");
     if (!smtp_user_json || !json_is_string(smtp_user_json)) {
         log_message("Error reading 'Mail Server/SMTP User' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_user = strdup(json_string_value(smtp_user_json));
+    g_smtp_user = strdup(json_string_value(smtp_user_json));
 
     // Mail Server -> SMTP Pass
     json_t *smtp_pass_json = json_object_get(mail_server_json, "SMTP Pass");
     if (!smtp_pass_json || !json_is_string(smtp_pass_json)) {
         log_message("Error reading 'Mail Server/SMTP Pass' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_pass = strdup(json_string_value(smtp_pass_json));
+    g_smtp_pass = strdup(json_string_value(smtp_pass_json));
 
     // Mail Server -> SMTP From
     json_t *smtp_from_json = json_object_get(mail_server_json, "SMTP From");
     if (!smtp_from_json || !json_is_string(smtp_from_json)) {
         log_message("Error reading 'Mail Server/SMTP From' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_from = strdup(json_string_value(smtp_from_json));
+    g_smtp_from = strdup(json_string_value(smtp_from_json));
 
     // Mail Server -> SMTP Name
     json_t *smtp_name_json = json_object_get(mail_server_json, "SMTP Name");
     if (!smtp_name_json || !json_is_string(smtp_name_json)) {
         log_message("Error reading 'Mail Server/SMTP Name' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
         return 1;
     }
-    smtp_name = strdup(json_string_value(smtp_name_json));
+    g_smtp_name = strdup(json_string_value(smtp_name_json));
     
+    // Mail Server -> SMTP Info E-Mail Addresses 
+    json_t *smtp_info_json = json_object_get(mail_server_json, "SMTP Info");
+    if (!smtp_info_json || !json_is_string(smtp_info_json)) {
+        log_message("Error reading 'Mail Server/SMTP Info' from configuration\n");
+        json_decref(root);
+        return 1;
+    }
+    g_smtp_info = strdup(json_string_value(smtp_info_json));
+    
+    // Mail Server -> SMTP Warn E-Mail Addresses 
+    json_t *smtp_warn_json = json_object_get(mail_server_json, "SMTP Warn");
+    if (!smtp_warn_json || !json_is_string(smtp_warn_json)) {
+        log_message("Error reading 'Mail Server/SMTP Info' from configuration\n");
+        json_decref(root);
+        return 1;
+    }
+    g_smtp_warn = strdup(json_string_value(smtp_warn_json));
+    
+
+    /////////////////////////////////////////
     // Process REST Services
+    /////////////////////////////////////////
     log_message("Agent: Configuring REST services\n");
-    json_t *rest_services_json = json_object_get(*root, "REST Services");
+    json_t *rest_services_json = json_object_get(root, "REST Services");
     if (!rest_services_json || !json_is_array(rest_services_json)) {
         log_message("Error reading 'REST Services' from configuration\n");
-        json_decref(*root);
-        free(*json_str);
+        json_decref(root);
+        free(json_str);
         return 1;
     }
 
-    size_t num_services = json_array_size(rest_services_json);
-    log_message("Agent: Found %zu REST services\n", num_services);
+    g_num_rest_services = json_array_size(rest_services_json);
+    services = malloc(g_num_rest_services * sizeof(service_t));
+    log_message("Agent: Found %zu REST services\n", g_num_rest_services);
 
-    services = malloc(num_services * sizeof(service_t));
 
-    for (size_t service_counter = 0; service_counter < num_services; service_counter++) {
+    // Iterate through services using service_counter
+    for (int service_counter = 0; service_counter < g_num_rest_services; service_counter++) {
+	    
         //log_message("Agent: Processing REST service %zu\n", service_counter);
-
         json_t *service_json = json_array_get(rest_services_json, service_counter);
         if (!service_json || !json_is_object(service_json)) {
             log_message("Error reading 'REST Services' item %zu from configuration\n", service_counter);
-            json_decref(*root);
-            free(*json_str);
+            json_decref(root);
+            free(json_str);
             free(services);
             return 1;
         }
 
         // log_message("Agent: Service JSON: %s\n", json_dumps(service_json, JSON_INDENT(2)));
-    
         const char *service_name = json_object_iter_key(json_object_iter(service_json));
-        // log_message("Agent: Service name: %s\n", service_name);
-
         json_t *service_config = json_object_get(service_json, service_name);
-        // log_message("Agent: Service config: %s\n", json_dumps(service_config, JSON_INDENT(2)));
 
+	// Identify Swagger JSON file
         json_t *swagger_file_json = json_object_get(service_config, "Swagger");
         if (!swagger_file_json || !json_is_string(swagger_file_json)) {
             log_message("Error reading 'Swagger' for service '%s' from configuration\n", service_name);
-            json_decref(*root);
-            free(*json_str);
+            json_decref(root);
             free(services);
             return 1;
         }
-
         const char *swagger_file = json_string_value(swagger_file_json);
-        // log_message("Agent: Loading Swagger data for '%s' from '%s'\n", service_name, swagger_file);
 
-        // Load and parse Swagger file
+        // Load Swagger JSON file
         FILE *fp_swagger = fopen(swagger_file, "r");
         if (!fp_swagger) {
             log_message("Swagger file '%s' not found for service '%s'\n", swagger_file, service_name);
-            json_decref(*root);
-            free(*json_str);
+            json_decref(root);
             free(services);
             return 1;
         }
@@ -1645,48 +1788,59 @@ int load_configuration(const char *config_file, char **json_str, json_t **root, 
         swagger_json_str[swagger_fsize] = '\0';
         fclose(fp_swagger);
 
+	// Parse Swagger JSON file
         json_error_t swagger_error;
         json_t *swagger_root = json_loads(swagger_json_str, 0, &swagger_error);
         if (!swagger_root) {
             log_message("Error parsing Swagger file '%s' for service '%s': %s\n", swagger_file, service_name, swagger_error.text);
             free(swagger_json_str);
-            json_decref(*root);
-            free(*json_str);
+            json_decref(root);
             free(services);
             return 1;
         }
+        free(swagger_json_str);
 
-        // Extract relevant information from the Swagger JSON and store it for later use
+	// Find the "paths" part of Swagger JSON 
         json_t *paths_json = json_object_get(swagger_root, "paths");
         if (paths_json && json_is_object(paths_json)) {
-            size_t num_endpoints = json_object_size(paths_json);
+
+            int num_endpoints = json_object_size(paths_json);
             endpoint_t *endpoints = malloc(num_endpoints * sizeof(endpoint_t));
-    
             const char *path;
             json_t *path_item;
-            size_t endpoint_counter = 0;
+            int endpoint_counter = 0;
+
+	    // Loop through each path (aka endpoint, eg: /api/login)
             json_object_foreach(paths_json, path, path_item) {
+
                 const char *method;
                 json_t *operation;
+
+	        // Loop through each endpoint method (eg: GET, POST)
                 json_object_foreach(path_item, method, operation) {
+
                     endpoints[endpoint_counter].path = strdup(path);
                     endpoints[endpoint_counter].method = strdup(method);
+                    endpoints[endpoint_counter].num_parameters = 0;
     
-                    // Extract parameters
+                    // Check for parameters
                     json_t *parameters_json = json_object_get(operation, "parameters");
                     if (parameters_json && json_is_array(parameters_json)) {
-                        size_t num_parameters = json_array_size(parameters_json);
+
+                        int num_parameters = json_array_size(parameters_json);
                         endpoints[endpoint_counter].parameters = malloc(num_parameters * sizeof(char *));
                         endpoints[endpoint_counter].num_parameters = num_parameters;
     
-                        for (size_t i = 0; i < num_parameters; i++) {
-                            json_t *parameter_json = json_array_get(parameters_json, i);
+                        for (int p = 0; p < num_parameters; p++) {
+                            json_t *parameter_json = json_array_get(parameters_json, p);
                             json_t *name_json = json_object_get(parameter_json, "name");
                             if (name_json && json_is_string(name_json)) {
-                                endpoints[endpoint_counter].parameters[i] = strdup(json_string_value(name_json));
+                                endpoints[endpoint_counter].parameters[p] = strdup(json_string_value(name_json));
                             }
                         }
-                    }
+                    } else {
+		        endpoints[endpoint_counter].parameters = NULL;
+		    }
 
                     // Extract security requirement
                     json_t *security_json = json_object_get(operation, "security");
@@ -1694,6 +1848,8 @@ int load_configuration(const char *config_file, char **json_str, json_t **root, 
                         json_t *security_item = json_array_get(security_json, 0);
                         const char *security_name = json_object_iter_key(json_object_iter(security_item));
                         endpoints[endpoint_counter].security = strdup(security_name);
+		    } else {
+                        endpoints[endpoint_counter].security = NULL;
                     }
     
                     endpoint_counter++;
@@ -1707,19 +1863,21 @@ int load_configuration(const char *config_file, char **json_str, json_t **root, 
             services[service_counter].num_endpoints = num_endpoints;
 
 	    // Print summary of loaded endpoints and parameters for the current service
-            size_t total_parameters = 0;
-            for (size_t i = 0; i < num_endpoints; i++) {
-                total_parameters += endpoints[i].num_parameters;
+            int total_parameters = 0;
+            for (int t = 0; t < num_endpoints; t++) {
+                total_parameters += services[service_counter].endpoints[t].num_parameters;
             }
-            log_message("Agent: Loaded %zu calls, %zu params for '%s' from '%s'\n",
+            log_message("Agent: Loaded %d calls, %d params for '%s' from '%s'\n",
                num_endpoints, total_parameters, service_name, swagger_file);
             }
     
-        free(swagger_json_str);
         json_decref(swagger_root);
     }
 
-   log_message(SEPARATOR);
+    log_message(SEPARATOR);
+
+    // Cleanup
+    json_decref(root);
 
     return 0;
 }
@@ -1816,19 +1974,15 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signal_handler);
 
     // Load configuration
-    json_t *root;
-    char *json_str;
-    if (load_configuration(argv[1], &json_str, &root, &db_path, &ws_port) != 0) {
-        free(json_str);
+    if (load_configuration(argv[1]) != 0) {
         return 1;
     }
 
     // Open database
-    log_message("Agent: Using dataase: '%s'\n", db_path);
-    int rc = sqlite3_open(db_path, &db);
+    log_message("Agent: Using database: '%s'\n", g_database_name);
+    int rc = sqlite3_open(g_database_name, &db);
     if (rc != SQLITE_OK) {
         log_message("Error opening SQLite database: %s\n", sqlite3_errmsg(db));
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
@@ -1836,7 +1990,6 @@ int main(int argc, char *argv[]) {
     // Create the database and tables
     if (create_database() != 0) {
         log_message("Error creating SQLite database\n");
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
@@ -1844,7 +1997,6 @@ int main(int argc, char *argv[]) {
     // Check the database version
     if (check_database_version(AGENT_DB_VERSION) != 0) {
         log_message("Error checking database version\n");
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
@@ -1853,7 +2005,6 @@ int main(int argc, char *argv[]) {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         log_message("Error getting current working directory\n");
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
@@ -1861,24 +2012,21 @@ int main(int argc, char *argv[]) {
     // Insert the default file set only if the FILESETS table is empty
     if (insert_default_fileset(cwd, now) != 0) {
         sqlite3_close(db);
-        free(json_str);
         return 1;
     }
 
     // Load filesets
-    log_message("Agent: Loading filesets\n");
     sqlite3_stmt *stmt;
     rc = sqlite3_prepare_v2(db, "SELECT FILESET, FILESETNAME, FILESETROOT FROM FILESETS", -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         log_message("Error preparing SQL statement: %s\n", sqlite3_errmsg(db));
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
 
     // A separate FSWATCH session is created for each fileset3yy
+    fsw_init_library();
     MonitorSession *fsw_sessions = NULL;
-    int fsw_session_count = 0;
     log_message("%sAgent: Initializing fileset monitor(s)s:\n", SEPARATOR);
 
     // Loop through all the FILESET records returned
@@ -1900,12 +2048,12 @@ int main(int argc, char *argv[]) {
         fsw_set_recursive(handle, true);
 
 	// Create FSWATCH session
-        MonitorSession fsw_session = {handle, fileset_id, strdup(filesetname), strdup(filesetroot), strdup(db_path)};
-        fsw_sessions = realloc(fsw_sessions, (fsw_session_count + 1) * sizeof(MonitorSession));
-        fsw_sessions[fsw_session_count++] = fsw_session;
+        MonitorSession fsw_session = {handle, fileset_id, strdup(filesetname), strdup(filesetroot)};
+        fsw_sessions = realloc(fsw_sessions, (g_fsw_session_count + 1) * sizeof(MonitorSession));
+        fsw_sessions[g_fsw_session_count++] = fsw_session;
 
 	// Set FSWATCH callback function
-        fsw_set_callback(handle, fswatch_callback, &fsw_sessions[fsw_session_count - 1]);
+        fsw_set_callback(handle, fswatch_callback, &fsw_sessions[g_fsw_session_count - 1]);
 
 	// Add directory to be monitored
         if (fsw_add_path(handle, filesetroot) != FSW_OK) {
@@ -1913,32 +2061,38 @@ int main(int argc, char *argv[]) {
             fsw_destroy_session(handle);
             free(fsw_session.filesetname);
             free(fsw_session.filesetroot);
-            free(fsw_session.db_path);
-            fsw_session_count--;
+            g_fsw_session_count--;
         }
 
 	// Report on what has been configured
-        log_message("%5d: %s\n", fileset_id, strdup(filesetname));
+        log_message("%5d: %s\n", fileset_id, filesetname);
 
 	// Update FILEDATA with the most current information
         refresh_fileset(fileset_id, filesetroot);
 
     }
 
-    // Start monitoring for each session
-    for (int i = 0; i < fsw_session_count; i++) {
-        pthread_t thread;
-        pthread_create(&thread, NULL, monitor_thread, &fsw_sessions[i]);
-        pthread_detach(thread);
+    // Allocate space for signal_threads
+    g_signal_threads = (pthread_t *)malloc(g_fsw_session_count * sizeof(pthread_t));
+    if (g_signal_threads == NULL) {
+        // Handle memory allocation error
+        fprintf(stderr, "Failed to allocate memory for signal_threads\n");
+        exit(1);
     }
-    
+
+    // Start monitoring for each session
+    for (int i = 0; i < g_fsw_session_count; i++) {
+        pthread_create(&g_signal_threads[i], NULL, monitor_thread, &fsw_sessions[i]);
+        pthread_detach(g_signal_threads[i]);
+    }
+
     // All done with the query and with FSWATCH setup
     sqlite3_finalize(stmt);
 
     // WebSocket server initialization
     log_message("%sAgent: Initializing websocket interface\n", SEPARATOR);
     log_message("Agent: Using websocket protocol: %s\n", AGENT_PROTOCOL);
-    log_message("Agent: Using websocket port: %d\n", ws_port);
+    log_message("Agent: Using websocket port: %d\n%s", ws_port, SEPARATOR);
 
     // Create websocket info
     struct lws_context_creation_info info;
@@ -1960,7 +2114,6 @@ int main(int argc, char *argv[]) {
     // Create websocket context
     struct lws_context *ws_context = NULL;
     if (initialize_websocket_server(&ws_context, ws_port) != 0) {
-        free(json_str);
         sqlite3_close(db);
         return 1;
     }
@@ -1968,55 +2121,79 @@ int main(int argc, char *argv[]) {
     // Make a note in the database event log
     LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "Agent Started", AGENT_VERSION, 0, 0);
 
-    // Send Notification EMail
-    const char *subject = "Agent Server Startup Log";
-    const char *to_list = "andrew@500foods.com";
-    send_email(subject, to_list);
+    // Send Notification E-Mail
+    send_email("Agent Startup", g_smtp_info);
 
+
+    ///////////////////////////////////////// 
     // Main loop
+    ///////////////////////////////////////// 
+   
     log_message("%sAgent: Waiting...\n%s", SEPARATOR, SEPARATOR);
 
-    while (running) {
+    while (g_running) {
         lws_service(ws_context, 100);
         usleep(100);
     }
 
-    // Clean up
+    
+    ///////////////////////////////////////// 
+    // Cleanup   
+    ///////////////////////////////////////// 
+
     LogEvent(AGENT_IP, AGENT_APP, AGENT_CLIENT, "Agent Stopped", AGENT_VERSION, 0, 0);
 
-    for (int i = 0; i < fsw_session_count; i++) {
+    // Cleanup FSWatch
+    for (int i = 0; i < g_fsw_session_count; i++) {
+        fsw_stop_monitor(fsw_sessions[i].handle);
         fsw_destroy_session(fsw_sessions[i].handle);
-        free(fsw_sessions[i].filesetname);
-        free(fsw_sessions[i].filesetroot);
-        free(fsw_sessions[i].db_path);
     }
     free(fsw_sessions);
-    free(json_str);
-    json_decref(root);
+
+    // Cleanup SQLite
     sqlite3_close(db);
+
+    // Cleanup WebSockets
     cleanup_websocket_server(ws_context);
 
-    // Free allocated memory
-    for (int i = 0; i < num_services; i++) {
+    // Cleanup REST Proxy
+    for (int i = 0; i < g_num_rest_services; i++) {
         service_t *service = &services[i];
         free(service->name);
         free(service->url);
 
         for (int j = 0; j < service->num_endpoints; j++) {
             endpoint_t *endpoint = &service->endpoints[j];
-            free(endpoint->path);
-            free(endpoint->method);
-            free(endpoint->security);
-
+            if (endpoint->path) free(endpoint->path);
+            if (endpoint->method)  free(endpoint->method);
             for (int k = 0; k < endpoint->num_parameters; k++) {
                 free(endpoint->parameters[k]);
             }
-            free(endpoint->parameters);
+	    if (endpoint->security) free(endpoint->security);
+	    if (endpoint->parameters) free(endpoint->parameters);
         }
         free(service->endpoints);
     }
     free(services);
 
+    // Wait for the signal handling thread to finish
+    for (int i = 0; i < g_fsw_session_count; i++) {
+       pthread_join(g_signal_threads[i], NULL);
+    }
+
+    // Cleanup signal_threads array
+    free(g_signal_threads);
+
+    // Cleanup SMTP options
+    free(g_smtp_host);
+    free(g_smtp_user);
+    free(g_smtp_pass);
+    free(g_smtp_from);
+    free(g_smtp_name);
+    free(g_smtp_info);
+    free(g_smtp_warn);
+
+    // All done!
     return 0;
 }
 
