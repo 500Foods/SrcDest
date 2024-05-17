@@ -1,0 +1,31 @@
+name: Build Linux x64
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  build:
+    name: Build Linux 64-bit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch-dev libcurl4-openssl-dev libssl-dev
+        
+    - name: Build agentc
+      working-directory: ./AgentC
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -lfswatch -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
+      
+    - name: Upload agentc as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: agentc-linux-x64
+        path: ./AgentC/agentc
