@@ -21,9 +21,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev fswatch libcurl4-openssl-dev libssl-dev
         
+    - name: Find fswatch library
+      run: |
+        fswatch_lib=$(dpkg -L fswatch | grep libfswatch.so)
+        echo "FSWATCH_LIB=$fswatch_lib" >> $GITHUB_ENV
+        
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -lfswatch -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
       
     - name: Upload agentc as artifact
       uses: actions/upload-artifact@v4
