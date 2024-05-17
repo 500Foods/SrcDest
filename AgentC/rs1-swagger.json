@@ -1,0 +1,258 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Bloggablity",
+        "description": "REST API for Bloggability (MySQL)",
+        "version": "1.0.3"
+    },
+    "paths": {
+        "\/api\/login": {
+            "get": {
+                "tags": [
+                    "Authorization Services"
+                ],
+                "summary": "Login",
+                "operationId": "50b07f6d424ef35623be0b5b3c6a4b35",
+                "parameters": [
+                    {
+                        "name": "apikey",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "default": "Test-APIKEY"
+                        }
+                    },
+                    {
+                        "name": "email",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "default": "administrator@example.com"
+                        }
+                    },
+                    {
+                        "name": "password",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "weblog",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "default": "bloggability"
+                        }
+                    },
+                    {
+                        "name": "encryption",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "default": "HS256"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful login"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "\/api\/renew": {
+            "get": {
+                "tags": [
+                    "Authorization Services"
+                ],
+                "summary": "Renew JWT",
+                "operationId": "05ab7b9de7ee5aeedc920c04ea84f8e8",
+                "responses": {
+                    "200": {
+                        "description": "Successful renewal"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "\/api\/logout": {
+            "post": {
+                "tags": [
+                    "Authorization Services"
+                ],
+                "summary": "Logout",
+                "operationId": "c55286697a02ad4f111739d22134c5e1",
+                "responses": {
+                    "200": {
+                        "description": "Successful logout"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "\/api\/logoutall": {
+            "post": {
+                "tags": [
+                    "Authorization Services"
+                ],
+                "summary": "Logout All",
+                "operationId": "176cd9dab7ddcbfaf41e1f4c5ce867dd",
+                "responses": {
+                    "200": {
+                        "description": "Successful logout from all devices"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "\/api\/loginhistory": {
+            "get": {
+                "tags": [
+                    "User Services"
+                ],
+                "summary": "Get Login History",
+                "operationId": "d5ae3c047b2a8cd2ec53daf4d7cf7a6b",
+                "responses": {
+                    "200": {
+                        "description": "Successful retrieval of login history"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "\/api\/status": {
+            "get": {
+                "tags": [
+                    "System Services"
+                ],
+                "summary": "Get System Status",
+                "operationId": "78e7e15c0def1037c8ce926b54713cf1",
+                "responses": {
+                    "200": {
+                        "description": "Successful retrieval of system status"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "\/api\/welcome": {
+            "get": {
+                "tags": [
+                    "Blog Services"
+                ],
+                "summary": "Get blog welcome data",
+                "operationId": "2e88e4c8c02b6e404267a0fa44c66b42",
+                "parameters": [
+                    {
+                        "name": "bloggable_id",
+                        "in": "query",
+                        "description": "Bloggable ID",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "default": "bloggable"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful response"
+                    }
+                }
+            }
+        },
+        "\/api\/rss": {
+            "get": {
+                "tags": [
+                    "Blog Services"
+                ],
+                "summary": "RSS feed",
+                "operationId": "9f380fe3a3c8c0b15e325133149ec328",
+                "parameters": [
+                    {
+                        "name": "weblog",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "default": "bloggability"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful login"
+                    },
+                    "400": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "bearerFormat": "JWT",
+                "scheme": "bearer"
+            }
+        }
+    }
+}

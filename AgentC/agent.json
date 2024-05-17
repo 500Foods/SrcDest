@@ -1,33 +1,18 @@
 {
-  "Agent Server": {
-    "Name": "ServerOne",
-    "Port": 23432,
-    "Database": "/usr/local/share/agentc/Agent.sqlite"
-  },
-  "Agent Systems": [
-    {
-      "ServerOne": {
-        "Key": "abc",
-        "URL": "wss://www.example.com/one",
-        "Protocol": "agentc-protocol"
-      }
-    },
-    {
-      "ServerTwo": {
-        "Key": "abc",
-        "URL": "wss://www.example.com/two",
-        "Protocol": "agentc-protocol"
-      }
-    },
-    {
-      "ServerThree": {
-        "Key": "abc",
-        "URL": "wss://www.example.com/three",
-        "Protocol": "agentc-protocol"
-      }
-    }
-  ],
-  "Agent History": [
-    "{\"type\":\"status\"}"
+  "Agent Database": "agent.sqlite",
+  "Agent Websocket": 23432,
+  "Client History": [
+    "{\"type\":\"status\"}",
+    "{\"type\":\"other\"}",
+    "{\"type\":\"other2\"}",
+    "{\"type\":\"events\"}",
+    "{\"type\":\"events\", \"app\":\"CLI\"}",
+    "{\"type\":\"events\", \"app\":\"CLI\", \"event\":\"Agent Started\", \"fileset\":0}",
+    "{\"type\":\"events\", \"app\":\"AgentC\", \"client\":\"CLI\", \"event\":\"Agent Started\", \"fileset\":0}",
+    "{\"type\":\"events\", \"app\":\"AgentC\", \"client\":\"CLI\", \"event\":\"Agent Started\", \"fileset\":\"0\"}",
+    "{\"type\":\"events\", \"app\":\"AgentC\", \"client\":\"CLI\", \"event\":\"Agent Started\", \"fileset\":0, \"age\":600}",
+    "{\"type\":\"events\", \"age\":600}",
+    "{\"type\":\"events\", \"age\":700}",
+    "{\"type\":\"events\", \"age\":600, \"app\":\"AgentC\"}"
   ]
 }
