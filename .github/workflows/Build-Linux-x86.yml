@@ -17,10 +17,13 @@ jobs:
         apt-get update
         apt-get install -y git
         
-    - uses: actions/checkout@v4
-      with:
-        persist-credentials: false
-    
+    - name: Checkout code
+      run: |
+        git init
+        git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+        git fetch --depth 1 origin ${{ github.ref }}
+        git checkout FETCH_HEAD
+        
     - name: Install dependencies
       run: |
         apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev fswatch libcurl4-openssl-dev libssl-dev
