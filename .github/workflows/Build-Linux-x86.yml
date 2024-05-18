@@ -109,6 +109,7 @@ jobs:
       run: |
         git config --global user.email "github-actions@example.com"
         git config --global user.name "GitHub Actions"
+        rm -rf fswatch-1.14.0.tar.gz fswatch-1.14.0/ libwebsockets-4.0.20.tar.gz libwebsockets-4.0.20/ xxHash-0.8.1/ xxhash-0.8.1.tar.gz
         git add ./dist/agentc-linux-x86
         git commit -m "Add agentc-linux-x86 to dist folder"
         git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
