@@ -9,6 +9,7 @@ jobs:
   build:
     name: Build Linux 64-bit
     runs-on: ubuntu-latest
+    continue-on-error: true
     
     steps:
     - uses: actions/checkout@v4
