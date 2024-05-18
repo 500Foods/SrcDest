@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        persist-credentials: true
+        persist-credentials: false
     
     - name: Install dependencies
       run: |
@@ -47,7 +47,7 @@ jobs:
         git config --global user.name "GitHub Actions"
         git add ./dist
         git commit -m "Add agentc-linux-x64 to dist folder"
-        git push
+        git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
         
     - name: Upload dist folder as artifact
       uses: actions/upload-artifact@v4
