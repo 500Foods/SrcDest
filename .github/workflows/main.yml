@@ -45,7 +45,7 @@ jobs:
     - run: echo "\`\`\`" >> README.md
     - run: cat xx02 >> README.md
 
-    - uses: stefanzweifel/git-auto-commit-action@v4
+    - uses: stefanzweifel/git-auto-commit-action@v5
       with:
         skip_dirty_check: true            
         branch: main
