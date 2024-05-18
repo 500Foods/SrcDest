@@ -10,7 +10,7 @@ This is a multi-purpose tool used, essentially, to copy files from a Source (Src
 [![Count Lines of Code](https://github.com/500Foods/SrcDest/actions/workflows/main.yml/badge.svg)](https://github.com/500Foods/SrcDest/actions/workflows/main.yml)
 <!--CLOC-START -->
 ```
-Last Updated at 2024-05-17 23:57:27 UTC
+Last Updated at 2024-05-18 00:02:52 UTC
 -------------------------------------------------------------------------------
 Language                     files          blank        comment           code
 -------------------------------------------------------------------------------
@@ -18,16 +18,16 @@ Pascal                          17           1737           2990          14700
 C                                4            412            276           1726
 Python                           2             83              2            337
 JSON                             2              0              0            276
-Markdown                         7             29              2            216
+Markdown                         7             29              2            217
 Delphi Form                      4              0              0            196
-YAML                             3             16             12             63
+YAML                             3             16             12             64
 C/C++ Header                     3             14              0             56
 HTML                             2             12              4             36
 Bourne Shell                     2              1              1              4
 CSS                              1              2              0              3
 Text                             1              0              0              1
 -------------------------------------------------------------------------------
-SUM:                            48           2306           3287          17614
+SUM:                            48           2306           3287          17616
 -------------------------------------------------------------------------------
 ```
 <!--CLOC-END-->
