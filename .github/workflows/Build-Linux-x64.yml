@@ -26,10 +26,11 @@ jobs:
         dpkg -s fswatch
         fswatch_dir=$(dpkg -L fswatch | grep libfswatch | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L${fswatch_dir}" >> $GITHUB_ENV
+        echo "FSWATCH_INC=-I${fswatch_dir}/c" >> $GITHUB_ENV
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto ${{ env.FSWATCH_INC }} 
       
     - name: Upload agentc as artifact
       uses: actions/upload-artifact@v4
