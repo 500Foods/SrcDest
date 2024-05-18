@@ -62,7 +62,15 @@ jobs:
         make
         make install
         ldconfig
-        
+    - name: Download and build XXHash
+      run: |
+        apt-get install -y wget
+        wget https://github.com/Cyan4973/xxHash/archive/v0.8.1.tar.gz -O xxhash-0.8.1.tar.gz
+        tar -xzf xxhash-0.8.1.tar.gz
+        cd xxHash-0.8.1
+        make
+        make install
+    
     - name: Find fswatch library
       run: |
         echo "/usr/include/libfswatch/c"
