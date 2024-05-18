@@ -9,6 +9,7 @@ jobs:
   build:
     name: Build Linux 32-bit
     runs-on: ubuntu-latest
+    container: i386/ubuntu:latest
     
     steps:
     - uses: actions/checkout@v4
@@ -17,21 +18,21 @@ jobs:
     
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libsqlite3-dev:i386 libxxhash-dev:i386 libjansson-dev:i386 libwebsockets-dev:i386 fswatch:i386 libcurl4-openssl-dev:i386 libssl-dev:i386
+        apt-get update
+        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev fswatch libcurl4-openssl-dev libssl-dev
         
     - name: Find fswatch library
       run: |
-        dpkg -s fswatch:i386
-        dpkg -L fswatch:i386
-        fswatch_lib=$(dpkg -L fswatch:i386 | grep 'libfswatch\.so' | head -n 1)
-        fswatch_inc=$(dpkg -L fswatch:i386 | grep 'cevent\.h' | head -n 1 | xargs dirname)
+        dpkg -s fswatch
+        dpkg -L fswatch
+        fswatch_lib=$(dpkg -L fswatch | grep 'libfswatch\.so' | head -n 1)
+        fswatch_inc=$(dpkg -L fswatch | grep 'cevent\.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
         echo "FSWATCH_INC=-I$fswatch_inc" >> $GITHUB_ENV
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc -m32 agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
 
     - name: Copy agentc to dist folder
       run: |
@@ -55,4 +56,3 @@ jobs:
         git add ./dist/agentc-linux-x86
         git commit -m "Add agentc-linux-x86 to dist folder"
         git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
-        
