@@ -37,7 +37,7 @@ jobs:
       run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
       
     - name: Upload agentc as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: agentc-linux-x64
         path: ./dist
