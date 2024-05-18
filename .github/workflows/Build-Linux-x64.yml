@@ -15,6 +15,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: true
     
     - name: Install dependencies
       run: |
@@ -38,7 +40,15 @@ jobs:
       run: |
         mkdir -p ./dist
         cp ./AgentC/agentc ./dist/agentc-linux-x64
-      
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.email "github-actions@example.com"
+        git config --global user.name "GitHub Actions"
+        git add ./dist
+        git commit -m "Add agentc-linux-x64 to dist folder"
+        git push
+        
     - name: Upload dist folder as artifact
       uses: actions/upload-artifact@v4
       with:
