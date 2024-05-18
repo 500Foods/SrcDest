@@ -36,9 +36,9 @@ jobs:
         apt-get install -y software-properties-common
         add-apt-repository ppa:ubuntu-toolchain-r/test
         apt-get update
-        apt-get install -y gcc-11 g++-11
-        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
-        update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+        apt-get install -y gcc-13 g++-13
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
+        update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
     
     - name: Download and build libwebsockets
       run: |
@@ -80,7 +80,7 @@ jobs:
       working-directory: ./AgentC
       run: |
         gcc --version
-        gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto 
+        gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto -pthread
 
     - name: Copy agentc to dist folder
       run: |
