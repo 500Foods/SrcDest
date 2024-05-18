@@ -30,6 +30,13 @@ jobs:
       run: |
         apt-get install -y build-essential autoconf automake libtool pkg-config libsqlite3-dev libxxhash-dev libjansson-dev libcurl4-openssl-dev libssl-dev cmake
 
+    - name: Install GCC
+      run: |
+        apt-get update
+        apt-get install -y gcc-11 g++-11
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+        update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+    
     - name: Download and build libwebsockets
       run: |
         apt-get install -y wget
