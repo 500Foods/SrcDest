@@ -45,9 +45,13 @@ jobs:
       run: |
         git config --global user.email "github-actions@example.com"
         git config --global user.name "GitHub Actions"
-        git add ./dist --force
-        git commit -m "Add agentc-linux-x64 to dist folder"
-        git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
+        git add ./dist
+        if git diff-index --quiet HEAD --; then
+          echo "No changes to commit"
+        else
+          git commit -m "Add agentc-linux-x64 to dist folder"
+          git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
+        fi
         
     - name: Upload dist folder as artifact
       uses: actions/upload-artifact@v4
