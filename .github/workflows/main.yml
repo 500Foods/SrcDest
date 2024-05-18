@@ -1,10 +1,6 @@
 name: Count Lines of Code
 
 on:
-#  push:
-#    branches: [ main ]
-#  pull_request:
-#    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -49,6 +45,8 @@ jobs:
 
     - uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        skip_dirty_check: true            
+        skip_dirty_check: true
         branch: main
         file_pattern: 'README.md'
+        push_options: '--force'
+        commit_options: '--no-verify'
