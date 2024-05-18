@@ -46,6 +46,8 @@ jobs:
         ls -l /usr/include/libfswatch/c
         echo "/usr/lib/*fswatch*"
         ls -l /usr/lib/*fswatch*
+        echo "ldconfig" 
+        ldconfig -p | grep fswatch
         # dpkg -s libfswatch-dev
         # dpkg -s libfswatch
         # dpkg -s fswatch
@@ -56,7 +58,7 @@ jobs:
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto -L/usr/lib
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto -L/usr/lib/
 
     - name: Copy agentc to dist folder
       run: |
