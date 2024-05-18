@@ -33,8 +33,8 @@ jobs:
       run: |
         dpkg -s libfswatch
         dpkg -L libfswatch
-        fswatch_lib=$(dpkg -L libfswatch | grep 'libfswatch\.so' | head -n 1)
-        fswatch_inc=$(dpkg -L libfswatch | grep 'cevent\.h' | head -n 1 | xargs dirname)
+        fswatch_lib=$(dpkg -L libfswatch-dev | grep 'libfswatch\.so' | head -n 1)
+        fswatch_inc=$(dpkg -L libfswatch-dev | grep 'cevent\.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
         echo "FSWATCH_INC=-I$fswatch_inc" >> $GITHUB_ENV
         
