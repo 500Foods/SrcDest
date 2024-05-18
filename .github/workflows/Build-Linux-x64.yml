@@ -40,7 +40,12 @@ jobs:
         git config --global user.name "GitHub Actions"
         mkdir -p ./dist
         cp ./AgentC/agentc ./dist/agentc-linux-x64
+        git add ./AgentC/agentc
         git add ./dist/agentc-linux-x64
-        git commit -m "Add agentc-linux-x64 to dist folder"
-        git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update AgentC/agentc and add agentc-linux-x64 to dist folder"
+          git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
+        fi
     
