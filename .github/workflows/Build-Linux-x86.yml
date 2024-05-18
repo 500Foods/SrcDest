@@ -19,15 +19,15 @@ jobs:
         
     - name: Checkout code
       run: |
-        git init
         git config --global --add safe.directory /__w/SrcDest/SrcDest        
+        git init
         git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
         git fetch --depth 1 origin ${{ github.ref }}
         git checkout FETCH_HEAD
         
     - name: Install dependencies
       run: |
-        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev fswatch libcurl4-openssl-dev libssl-dev
+        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch-dev libcurl4-openssl-dev libssl-dev
         
     - name: Find fswatch library
       run: |
