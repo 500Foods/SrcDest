@@ -39,21 +39,21 @@ jobs:
         mkdir -p ./dist
         cp ./AgentC/agentc ./dist/agentc-linux-x64
 
-    - name: Check for changes
-      id: changes
-      run: |
-        if git diff --quiet HEAD; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
-        
-    - name: Commit and push changes
-      if: steps.changes.outputs.has_changes == 'true'
-      run: |
-        git config --global user.email "github-actions@example.com"
-        git config --global user.name "GitHub Actions"
-        git add ./dist
-        git commit -m "Add agentc-linux-x64 to dist folder"
-        git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main    
+- name: Check for changes
+  id: changes
+  run: |
+    if git diff --quiet HEAD -- ./dist/agentc-linux-x64; then
+      echo "has_changes=false" >> $GITHUB_OUTPUT
+    else
+      echo "has_changes=true" >> $GITHUB_OUTPUT
+    fi
+
+- name: Commit and push changes
+  if: steps.changes.outputs.has_changes == 'true'
+  run: |
+    git config --global user.email "github-actions@example.com"
+    git config --global user.name "GitHub Actions"
+    git add ./dist/agentc-linux-x64
+    git commit -m "Add agentc-linux-x64 to dist folder"
+    git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
     
