@@ -42,6 +42,13 @@ jobs:
         
     - name: Find fswatch library
       run: |
+        echo "/usr/include/libfswatch/c"
+        ls -l /usr/include/libfswatch/c
+        echo "/usr/lib/*fswatch*"
+        ls -l /usr/lib/*fswatch*
+        dpkg -s libfswatch-dev
+        dpkg -s libfswatch
+        dpkg -s fswatch
         fswatch_lib=$(ldconfig -p | grep 'libfswatch\.so' | head -n 1 | awk '{print $4}')
         fswatch_inc=$(find /usr/include -name 'cevent.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
@@ -49,7 +56,7 @@ jobs:
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto -L/usr/lib
 
     - name: Copy agentc to dist folder
       run: |
