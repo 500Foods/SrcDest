@@ -96,12 +96,12 @@ jobs:
           git config --global user.name "GitHub Actions"
           rm -rf fswatch-1.14.0.tar.gz fswatch-1.14.0/ libwebsockets-4.0.20.tar.gz libwebsockets-4.0.20/ xxHash-0.8.1/ xxhash-0.8.1.tar.gz
           mkdir -p ./dist
-          cp ./AgentC/agentc ./dist/agentc-linux-x64
+          cp ./AgentC/agentc ./dist/agentc-linux-x86
           git add ./AgentC/agentc
-          git add ./dist/agentc-linux-x64
+          git add ./dist/agentc-linux-x86
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to commit"
           else
-            git commit -m "Update AgentC/agentc and add agentc-linux-x64 to dist folder"
+            git commit -m "Update AgentC/agentc and add agentc-linux-x86 to dist folder"
             git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
           fi
