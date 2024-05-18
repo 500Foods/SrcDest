@@ -27,7 +27,7 @@ jobs:
         
     - name: Install dependencies
       run: |
-        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch-dev libcurl4-openssl-dev libssl-dev
+        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch libcurl4-openssl-dev libssl-dev
         
     - name: Find fswatch library
       run: |
