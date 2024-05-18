@@ -21,7 +21,7 @@ jobs:
       contents: write
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Count Lines of Code (cloc)
       uses: djdefi/cloc-action@main
