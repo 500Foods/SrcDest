@@ -45,11 +45,11 @@ jobs:
       run: |
         git config --global user.email "github-actions@example.com"
         git config --global user.name "GitHub Actions"
-        git stash
-        git pull origin main --rebase
-        git stash pop
-        git add ./AgentC/agentc
-        git add ./dist
+        # git stash
+        # git pull origin main --rebase
+        # git stash pop
+        # git add ./AgentC/agentc
+        # git add ./dist
         git commit -m "Add agentc-linux-x64 to dist folder"
         git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
         
