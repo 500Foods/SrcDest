@@ -45,7 +45,7 @@ jobs:
         name: agentc-linux-x64
         path: ./dist/agentc-linux-x64
 
-    - uses: stefanzweifel/git-auto-commit-action@v4
+    - uses: stefanzweifel/git-auto-commit-action@v5
       with:
         skip_dirty_check: true            
         branch: main
