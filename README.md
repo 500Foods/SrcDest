@@ -10,7 +10,7 @@ This is a multi-purpose tool used, essentially, to copy files from a Source (Src
 [![Count Lines of Code](https://github.com/500Foods/SrcDest/actions/workflows/main.yml/badge.svg)](https://github.com/500Foods/SrcDest/actions/workflows/main.yml)
 <!--CLOC-START -->
 ```
-Last Updated at 2024-05-18 02:42:45 UTC
+Last Updated at 2024-05-18 02:46:21 UTC
 -------------------------------------------------------------------------------
 Language                     files          blank        comment           code
 -------------------------------------------------------------------------------
@@ -20,14 +20,14 @@ Python                           2             83              2            337
 JSON                             2              0              0            276
 Markdown                         7             29              2            217
 Delphi Form                      4              0              0            196
-YAML                             4             31              0            154
+YAML                             4             32              0            151
 C/C++ Header                     3             14              0             56
 HTML                             2             12              4             36
 Bourne Shell                     2              1              1              4
 CSS                              1              2              0              3
 Text                             1              0              0              1
 -------------------------------------------------------------------------------
-SUM:                            49           2321           3275          17706
+SUM:                            49           2322           3275          17703
 -------------------------------------------------------------------------------
 ```
 <!--CLOC-END-->
