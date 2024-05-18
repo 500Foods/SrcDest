@@ -28,7 +28,7 @@ jobs:
         
     - name: Install dependencies
       run: |
-        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch-dev libcurl4-openssl-dev libssl-dev
+        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libcurl4-openssl-dev libssl-dev
         
     - name: Download and compile fswatch
       run: |
@@ -46,9 +46,9 @@ jobs:
         ls -l /usr/include/libfswatch/c
         echo "/usr/lib/*fswatch*"
         ls -l /usr/lib/*fswatch*
-        dpkg -s libfswatch-dev
-        dpkg -s libfswatch
-        dpkg -s fswatch
+        # dpkg -s libfswatch-dev
+        # dpkg -s libfswatch
+        # dpkg -s fswatch
         fswatch_lib=$(ldconfig -p | grep 'libfswatch\.so' | head -n 1 | awk '{print $4}')
         fswatch_inc=$(find /usr/include -name 'cevent.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
