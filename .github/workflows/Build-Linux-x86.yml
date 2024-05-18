@@ -33,9 +33,9 @@ jobs:
     - name: Download and compile fswatch
       run: |
         apt-get install -y wget
-        wget https://github.com/emcrisostomo/fswatch/releases/download/1.14.0/fswatch-1.14.0.tar.gz
-        tar -xzf fswatch-1.14.0.tar.gz
-        cd fswatch-1.14.0
+        wget https://github.com/emcrisostomo/fswatch/releases/download/1.15.0/fswatch-1.15.0.tar.gz
+        tar -xzf fswatch-1.15.0.tar.gz
+        cd fswatch-1.15.0
         ./configure --prefix=/usr
         make
         make install
