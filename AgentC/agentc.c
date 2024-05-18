@@ -20,7 +20,7 @@
 #define MAX_LOG_DETAIL_SIZE 100
 #define MAX_REST_SERVICES   10
 
-// Hash Seedf
+// Hash Seed
 #define XXH_STATIC_SEED     1234567
 
 // Debug Flags
@@ -366,7 +366,7 @@ void LogFinalize(struct lws *wsi, LogInfo log_info) {
     int msecs = 0;
     gettimeofday(&stop, NULL);
     msecs = (int)((double)(stop.tv_usec - log_info.start.tv_usec) / 1000 + (double)(stop.tv_sec - log_info.start.tv_sec));
-;
+
     ws_session_data *session_data = (ws_session_data *)lws_wsi_user(wsi);
     const char *request_ip = session_data ? session_data->request_ip : "";
     const char *request_app = session_data ? session_data->request_app : "";
