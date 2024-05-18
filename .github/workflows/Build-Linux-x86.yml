@@ -30,12 +30,20 @@ jobs:
       run: |
         apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev libfswatch-dev libcurl4-openssl-dev libssl-dev
         
+    - name: Download and compile fswatch
+      run: |
+        apt-get install -y wget
+        wget https://github.com/emcrisostomo/fswatch/releases/download/1.14.0/fswatch-1.14.0.tar.gz
+        tar -xzf fswatch-1.14.0.tar.gz
+        cd fswatch-1.14.0
+        ./configure --prefix=/usr
+        make
+        make install
+        
     - name: Find fswatch library
       run: |
-        dpkg -s libfswatch-dev
-        dpkg -L libfswatch-dev
-        fswatch_lib=$(dpkg -L libfswatch-dev | grep 'libfswatch\.so' | head -n 1)
-        fswatch_inc=$(dpkg -L libfswatch-dev | grep 'cevent\.h' | head -n 1 | xargs dirname)
+        fswatch_lib=$(ldconfig -p | grep 'libfswatch\.so' | head -n 1 | awk '{print $4}')
+        fswatch_inc=$(find /usr/include -name 'cevent.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
         echo "FSWATCH_INC=-I$fswatch_inc" >> $GITHUB_ENV
         
