@@ -10,6 +10,7 @@ jobs:
     name: Build Linux 32-bit
     runs-on: ubuntu-latest
     container: i386/ubuntu:latest
+    continue-on-error: true
     
     steps:
     - name: Install git
@@ -41,13 +42,11 @@ jobs:
     - name: Build agentc
       working-directory: ./AgentC
       run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
-      continue-on-error: true
 
     - name: Copy agentc to dist folder
       run: |
         mkdir -p ./dist
         cp ./AgentC/agentc ./dist/agentc-linux-x86
-      continue-on-error: true
 
     - name: Check for changes
       id: changes
@@ -57,7 +56,6 @@ jobs:
         else
           echo "has_changes=true" >> $GITHUB_OUTPUT
         fi
-      continue-on-error: true
         
     - name: Commit and push changes
       if: steps.changes.outputs.has_changes == 'true'
@@ -67,4 +65,4 @@ jobs:
         git add ./dist/agentc-linux-x86
         git commit -m "Add agentc-linux-x86 to dist folder"
         git push "https://${{ secrets.GH_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
-      continue-on-error: true
+     
