@@ -39,6 +39,7 @@ jobs:
         ./configure --prefix=/usr
         make
         make install
+        ldconfig
         
     - name: Find fswatch library
       run: |
