@@ -1952,7 +1952,7 @@ XXH64_hash_t calculate_file_hash(const char *path) {
 }
 
 void format_hash_string(XXH64_hash_t hash, char *hash_str) {
-    snprintf(hash_str, 17, "%016llx", hash);
+    snprintf(hash_str, 17, "%016llx", (unsigned long long)hash);
 }
 
 void print_summary(int fileset_id, int fileCount, int matchedCount, int addedCount, int updatedCount, int missingCount) {
