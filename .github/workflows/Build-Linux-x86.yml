@@ -31,8 +31,8 @@ jobs:
         
     - name: Find fswatch library
       run: |
-        dpkg -s libfswatch
-        dpkg -L libfswatch
+        dpkg -s libfswatch-dev
+        dpkg -L libfswatch-dev
         fswatch_lib=$(dpkg -L libfswatch-dev | grep 'libfswatch\.so' | head -n 1)
         fswatch_inc=$(dpkg -L libfswatch-dev | grep 'cevent\.h' | head -n 1 | xargs dirname)
         echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
