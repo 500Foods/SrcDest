@@ -47,6 +47,6 @@ jobs:
 
     - uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        skip_dirty_check: true            
+        # skip_dirty_check: true            
         branch: main
-        file_pattern: 'agentc-linux-x64'        
+        #file_pattern: 'agentc-linux-x64'        
