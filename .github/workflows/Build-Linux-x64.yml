@@ -32,21 +32,16 @@ jobs:
         
     - name: Build agentc
       working-directory: ./AgentC
-      #run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto ${{ env.FSWATCH_INC }} 
-      #run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -L/usr/lib/x86_64-linux-gnu/libfswatch -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
+
+    - name: Copy agentc to dist folder
       run: |
-        gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
-        mkdir ../dist
-        cp agentc ../dist/agentc-linux-x64
+        mkdir -p ./dist
+        cp ./AgentC/agentc ./dist/agentc-linux-x64
       
-    - name: Upload agentc as artifact
+    - name: Upload dist folder as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: agentc-linux-x64
-        path: ./dist/agentc-linux-x64
-
-    - uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        # skip_dirty_check: true            
-        branch: main
-        #file_pattern: 'agentc-linux-x64'        
+        name: dist
+        path: ./dist      
+    
