@@ -25,15 +25,16 @@ jobs:
       run: |
         dpkg -s fswatch
         dpkg -L fswatch
-        fswatch_dir=$(dpkg -L fswatch | grep libfswatch | head -n 1 | xargs dirname)
-        echo "FSWATCH_LIB=-L${fswatch_dir}" >> $GITHUB_ENV
-        echo "FSWATCH_INC=-I${fswatch_dir}/c" >> $GITHUB_ENV
+        fswatch_lib=$(dpkg -L fswatch | grep 'libfswatch\.so' | head -n 1)
+        fswatch_inc=$(dpkg -L fswatch | grep 'cevent\.h' | head -n 1 | xargs dirname)
+        echo "FSWATCH_LIB=-L$(dirname $fswatch_lib)" >> $GITHUB_ENV
+        echo "FSWATCH_INC=-I$fswatch_inc" >> $GITHUB_ENV
         
     - name: Build agentc
       working-directory: ./AgentC
       #run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto ${{ env.FSWATCH_INC }} 
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -L/usr/lib/x86_64-linux-gnu/libfswatch -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
-
+      #run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -L/usr/lib/x86_64-linux-gnu/libfswatch -lcurl -lssl -lcrypto -I/usr/include/libfswatch/c
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto
       
     - name: Upload agentc as artifact
       uses: actions/upload-artifact@v4
