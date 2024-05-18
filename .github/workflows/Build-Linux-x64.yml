@@ -30,7 +30,9 @@ jobs:
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto ${{ env.FSWATCH_INC }} 
+      #run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lcurl -lssl -lcrypto ${{ env.FSWATCH_INC }} 
+      1run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets -L/usr/lib/x86_64-linux-gnu/libfswatch -lcurl -lssl -lcrypto -I/usr/lib/x86_64-linux-gnu/libfswatch/c
+
       
     - name: Upload agentc as artifact
       uses: actions/upload-artifact@v4
