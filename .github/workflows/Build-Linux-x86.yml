@@ -28,8 +28,20 @@ jobs:
         
     - name: Install dependencies
       run: |
-        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libwebsockets-dev=4 libcurl4-openssl-dev libssl-dev
-        
+        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libcurl4-openssl-dev libssl-dev
+
+    - name: Download and build libwebsockets
+      run: |
+        apt-get install -y wget
+        wget https://github.com/warmcat/libwebsockets/archive/refs/tags/v4.0.20.tar.gz -O libwebsockets-4.0.20.tar.gz
+        tar -xzf libwebsockets-4.0.20.tar.gz
+        cd libwebsockets-4.0.20
+        mkdir build
+        cd build
+        cmake ..
+        make
+        make install
+    
     - name: Download and compile fswatch
       run: |
         apt-get install -y wget
@@ -56,7 +68,7 @@ jobs:
         
     - name: Build agentc
       working-directory: ./AgentC
-      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -llibfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto 
+      run: gcc agentc.c -o agentc -lsqlite3 -lxxhash -ljansson -lwebsockets ${{ env.FSWATCH_LIB }} -lfswatch ${{ env.FSWATCH_INC }} -lcurl -lssl -lcrypto 
 
     - name: Copy agentc to dist folder
       run: |
