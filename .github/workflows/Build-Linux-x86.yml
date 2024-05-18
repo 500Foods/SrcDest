@@ -28,7 +28,7 @@ jobs:
         
     - name: Install dependencies
       run: |
-        apt-get install -y build-essential libsqlite3-dev libxxhash-dev libjansson-dev libcurl4-openssl-dev libssl-dev
+        apt-get install -y build-essential autoconf automake libtool pkg-config libsqlite3-dev libxxhash-dev libjansson-dev libcurl4-openssl-dev libssl-dev cmake
 
     - name: Download and build libwebsockets
       run: |
