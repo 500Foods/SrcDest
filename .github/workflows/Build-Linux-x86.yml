@@ -20,6 +20,7 @@ jobs:
     - name: Checkout code
       run: |
         git init
+        git config --global --add safe.directory /__w/SrcDest/SrcDest        
         git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
         git fetch --depth 1 origin ${{ github.ref }}
         git checkout FETCH_HEAD
